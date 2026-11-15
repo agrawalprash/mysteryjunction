@@ -8,9 +8,9 @@ import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 import { FORMATS, type Candidate, type CustomRow, type Direction, type ExitRecord, type Facets, type TasteProfile, type WatchRecord } from '../engine/types.ts';
 
-const MODEL = 'claude-opus-5-5';
+export const MODEL = 'claude-opus-5-5';
 // If a request is declined by a safety classifier, the API retries it on a suitable fallback model.
-const FALLBACK: { betas: Anthropic.Beta.AnthropicBeta[]; fallbacks: 'default' } = {
+export const FALLBACK: { betas: Anthropic.Beta.AnthropicBeta[]; fallbacks: 'default' } = {
   betas: ['server-side-fallback-2026-07-01'],
   fallbacks: 'default',
 };
@@ -21,7 +21,7 @@ export interface ClaudeAuth {
   workspaceId?: string;
 }
 
-function client(auth: ClaudeAuth) {
+export function client(auth: ClaudeAuth) {
   // The key stays on the device; requests go straight from the device to Anthropic.
   return new Anthropic({
     apiKey: auth.apiKey,

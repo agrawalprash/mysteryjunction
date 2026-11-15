@@ -162,10 +162,15 @@ function move(dir: Dir): boolean {
     const r = best?.getBoundingClientRect();
     // Only page when the next stop is fully off-screen (text in between would be skipped).
     const inRow = !!best?.closest('.row, .topbar');
-    const offscreen = !r || (!inRow && (dir === 'ArrowDown' ? r.top > view : r.bottom < headerBottom()));
+    // Also step through when the next stop is on screen but far away: the text in between
+    // would otherwise fly past in one jump.
+    const gap = r ? (dir === 'ArrowDown' ? r.top - c.bottom : c.top - r.bottom) : Infinity;
+    const offscreen =
+      !r || (!inRow && (dir === 'ArrowDown' ? r.top > view : r.bottom < headerBottom())) || (!inRow && gap > view * 0.35);
     // From the full-screen player, ▼ goes straight to the buttons below it.
     if (scroller && offscreen && !current.closest('[data-own-keys]')) {
-      animateScrollBy(scroller, 'y', (dir === 'ArrowDown' ? 1 : -1) * view * 0.45);
+      // About a third of a screen: a few lines at a time, so you can read along.
+      animateScrollBy(scroller, 'y', (dir === 'ArrowDown' ? 1 : -1) * view * 0.3);
       return true;
     }
   }
