@@ -13,12 +13,13 @@ function isVisible(el: HTMLElement): boolean {
   return r.width > 0 && r.height > 0 && el.offsetParent !== null;
 }
 
-function candidates(): HTMLElement[] {
+function candidates(fromHeader = false): HTMLElement[] {
   // While a panel is open, keep focus inside it.
   const dialog = document.querySelector('[role="dialog"]');
   const scope: ParentNode = dialog ?? document;
   // Things scrolled underneath the sticky header can't be seen, so they aren't stops.
-  const header = !dialog ? document.querySelector<HTMLElement>('.topbar') : null;
+  // (Only matters when moving sideways along the header; rows above are reached by scrolling.)
+  const header = !dialog && fromHeader ? document.querySelector<HTMLElement>('.topbar') : null;
   const headerBottom = header && isVisible(header) ? header.getBoundingClientRect().bottom : -Infinity;
   return [...scope.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => {
     if (!isVisible(el)) return false;
@@ -53,9 +54,92 @@ export function directionalScore(c: DOMRect, r: DOMRect, dir: Dir): number | nul
   }
 }
 
+// ---------------------------------------------------------------- calm scrolling
+// One short animation per scroll target; a new key press restarts from wherever the
+// page is, instead of queueing animations (which is what makes scrolling jumpy).
+
+const anims = new Map<Element | Window, number>();
+
+function scrollPos(t: Element | Window, axis: 'x' | 'y') {
+  if (t === window) return axis === 'y' ? window.scrollY : window.scrollX;
+  const el = t as Element;
+  return axis === 'y' ? el.scrollTop : el.scrollLeft;
+}
+
+function setScroll(t: Element | Window, axis: 'x' | 'y', v: number) {
+  if (t === window) window.scrollTo(axis === 'x' ? v : window.scrollX, axis === 'y' ? v : window.scrollY);
+  else if (axis === 'y') (t as Element).scrollTop = v;
+  else (t as Element).scrollLeft = v;
+}
+
+export function animateScrollBy(t: Element | Window, axis: 'x' | 'y', delta: number, ms = 220) {
+  if (Math.abs(delta) < 1) return;
+  const prev = anims.get(t);
+  if (prev) cancelAnimationFrame(prev);
+  const from = scrollPos(t, axis);
+  const to = from + delta;
+  const start = performance.now();
+  const step = (now: number) => {
+    const p = Math.min(1, (now - start) / ms);
+    const eased = 1 - Math.pow(1 - p, 3);
+    setScroll(t, axis, from + (to - from) * eased);
+    if (p < 1) anims.set(t, requestAnimationFrame(step));
+    else anims.delete(t);
+  };
+  anims.set(t, requestAnimationFrame(step));
+}
+
+function headerBottom(): number {
+  if (document.querySelector('[role="dialog"]')) return 0;
+  const h = document.querySelector<HTMLElement>('.topbar');
+  return h && isVisible(h) ? h.getBoundingClientRect().bottom : 0;
+}
+
+/** Scroll just enough to show `el` (and its row title, for cards in a row). */
+function reveal(el: HTMLElement) {
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const gap = 1.5 * rem;
+  // Sideways, inside a row of cards.
+  const row = el.closest<HTMLElement>('.row-scroll');
+  if (row) {
+    const r = el.getBoundingClientRect();
+    const c = row.getBoundingClientRect();
+    const pad = 3 * rem;
+    if (r.left < c.left + pad) animateScrollBy(row, 'x', r.left - (c.left + pad));
+    else if (r.right > c.right - pad) animateScrollBy(row, 'x', r.right - (c.right - pad));
+  }
+  // Up and down, inside the open panel or the page.
+  const dialog = el.closest<HTMLElement>('.sheet');
+  const target: Element | Window = dialog ?? window;
+  const area = dialog ? dialog.getBoundingClientRect() : { top: headerBottom(), bottom: window.innerHeight };
+  // Rows of cards: the focused row (with its title) sits near the top, like a TV launcher,
+  // so the next row is always peeking in below.
+  const section = el.closest<HTMLElement>('.row');
+  if (section && !dialog) {
+    animateScrollBy(target, 'y', section.getBoundingClientRect().top - (area.top + gap * 0.5));
+    return;
+  }
+  const box = el.getBoundingClientRect();
+  if (box.top < area.top + gap) animateScrollBy(target, 'y', box.top - (area.top + gap));
+  else if (box.bottom > area.bottom - gap) animateScrollBy(target, 'y', box.bottom - (area.bottom - gap));
+}
+
+/** True if there's more page (or panel) to scroll to in that direction. */
+function canScroll(dir: 'ArrowUp' | 'ArrowDown'): Element | Window | null {
+  const dialog = document.querySelector<HTMLElement>('.sheet');
+  if (dialog) {
+    const more = dir === 'ArrowDown' ? dialog.scrollTop + dialog.clientHeight < dialog.scrollHeight - 2 : dialog.scrollTop > 0;
+    return more ? dialog : null;
+  }
+  const doc = document.documentElement;
+  const more = dir === 'ArrowDown' ? window.scrollY + window.innerHeight < doc.scrollHeight - 2 : window.scrollY > 0;
+  return more ? window : null;
+}
+
 function move(dir: Dir): boolean {
   const current = document.activeElement as HTMLElement | null;
-  const all = candidates();
+  const inHeader = !!current?.closest('.topbar');
+  const all = candidates(inHeader && (dir === 'ArrowLeft' || dir === 'ArrowRight'));
   if (!current || current === document.body || !all.includes(current)) {
     focusFirst();
     return true;
@@ -71,15 +155,23 @@ function move(dir: Dir): boolean {
       bestScore = s;
     }
   }
-  if (!best) {
-    // Nothing further up: bring the page back to the top so the header is visible.
-    if (dir === 'ArrowUp') window.scrollTo({ top: 0, behavior: 'smooth' });
-    return false;
+  // Long text with nothing to select in it: page through it instead of jumping past.
+  if (dir === 'ArrowDown' || dir === 'ArrowUp') {
+    const scroller = canScroll(dir);
+    const view = window.innerHeight;
+    const r = best?.getBoundingClientRect();
+    // Only page when the next stop is fully off-screen (text in between would be skipped).
+    const inRow = !!best?.closest('.row, .topbar');
+    const offscreen = !r || (!inRow && (dir === 'ArrowDown' ? r.top > view : r.bottom < headerBottom()));
+    // From the full-screen player, ▼ goes straight to the buttons below it.
+    if (scroller && offscreen && !current.closest('[data-own-keys]')) {
+      animateScrollBy(scroller, 'y', (dir === 'ArrowDown' ? 1 : -1) * view * 0.45);
+      return true;
+    }
   }
+  if (!best) return false;
   best.focus({ preventScroll: true });
-  // Move the page only as far as needed to keep the new item in view (CSS scroll-margin
-  // keeps a comfortable gap), instead of re-centring on every press.
-  best.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  reveal(best);
   return true;
 }
 
@@ -89,7 +181,7 @@ export function focusFirst(selector = '[data-autofocus]') {
   const preferred = scope.querySelector<HTMLElement>(selector);
   const target = preferred && isVisible(preferred) ? preferred : candidates().find((el) => el.getBoundingClientRect().top >= 0);
   target?.focus({ preventScroll: true });
-  target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (target) reveal(target);
 }
 
 let installed = false;

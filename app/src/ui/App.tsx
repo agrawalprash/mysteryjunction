@@ -92,6 +92,7 @@ export function App() {
 
   useEffect(() => {
     document.body.classList.toggle('tv', tv);
+    document.documentElement.classList.toggle('tv', tv);
     if (tv) enableSpatialNav();
   }, [tv]);
 
