@@ -16,6 +16,8 @@ An Android app for watching YouTube with a recommendation feed built for variety
 - **New sets on demand.** Besides the daily set, "New set" makes another (YouTube's free quota allows about three a day). The next set is prepared in the background, so it usually appears instantly.
 - **Ask Wander.** Speak or type: a mood for now ("music today"), a lasting row ("add a row for live jazz"), an interest to remember, or a rule ("no true crime"). Claude applies it; everything remembered is listed in Settings and can be removed.
 - **In-app updates.** The app checks this repo's latest release and installs it with one tap (Android asks once for permission, then confirms each install).
+- **Phone as the TV's microphone.** Link the phone app to the TV app with a 6-digit code (same Wi-Fi, no third-party server). Ask on the phone and choose "📺 TV"; the phone can also send the API keys to the TV and sync rows, interests and rules.
+- **Diagnose with Claude.** Settings collects a read-only report of the device's voice setup (speech services, permissions, default assistant, remotes, DNS/HTTPS reachability of Google hosts, a live speech test with Android's error code) and Claude explains the likely cause.
 - **TV mode.** On Android TV the app shows up on the home screen, uses a larger layout, and works with the remote (arrows move, OK opens; in the player OK pauses, left/right skip 10 seconds, down shows details). Can be forced on or off in Settings.
 
 Code map: `src/engine/` (interest model and feed assembly, unit tested), `src/lib/` (YouTube, Claude, storage), `src/ui/` (screens), `android/` (Capacitor project, incl. fullscreen video support in `MainActivity.java`).

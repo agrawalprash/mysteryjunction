@@ -2,7 +2,7 @@
 // focusable element in that direction, and OK (Enter) activates it.
 // Elements marked data-own-keys handle Left/Right/Enter themselves (the player).
 
-const FOCUSABLE = 'button:not([disabled]), a[href], input, select, summary, [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select, summary, [tabindex]:not([tabindex="-1"])';
 type Dir = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight';
 
 function isVisible(el: HTMLElement): boolean {
@@ -15,8 +15,19 @@ function isVisible(el: HTMLElement): boolean {
 
 function candidates(): HTMLElement[] {
   // While a panel is open, keep focus inside it.
-  const scope: ParentNode = document.querySelector('[role="dialog"]') ?? document;
-  return [...scope.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(isVisible);
+  const dialog = document.querySelector('[role="dialog"]');
+  const scope: ParentNode = dialog ?? document;
+  // Things scrolled underneath the sticky header can't be seen, so they aren't stops.
+  const header = !dialog ? document.querySelector<HTMLElement>('.topbar') : null;
+  const headerBottom = header && isVisible(header) ? header.getBoundingClientRect().bottom : -Infinity;
+  return [...scope.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => {
+    if (!isVisible(el)) return false;
+    if (header && !header.contains(el)) {
+      const r = el.getBoundingClientRect();
+      if (r.top + r.height / 2 < headerBottom) return false;
+    }
+    return true;
+  });
 }
 
 /** Score how good `r` is as the next stop from `c` going `dir` (lower is better). */

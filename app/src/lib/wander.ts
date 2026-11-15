@@ -88,6 +88,16 @@ function fresh(): State {
 // Older saves may lack newer fields; fill them in.
 let state: State = { ...fresh(), ...load<Partial<State>>('state', {}) };
 
+// Lets screens know when the set on screen changes (e.g. after a request from the phone).
+const listeners = new Set<() => void>();
+export function onFeedChanged(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+function emitFeedChanged() {
+  listeners.forEach((fn) => fn());
+}
+
 function persist() {
   // Keep storage bounded.
   const now = Date.now();
@@ -321,6 +331,7 @@ function install(found: Candidate[], directions: Direction[], note: string, focu
   state.feed = feed;
   state.opened = [];
   persist();
+  emitFeedChanged();
   return feed;
 }
 
@@ -361,6 +372,8 @@ export interface AskOutcome {
   reply: string;
   feed: DailyFeed | null;
   changes: string[];
+  /** Set when Claude's changes were saved but a new set couldn't be made (e.g. quota). */
+  notice?: string;
 }
 
 /** Hand what the viewer said to Claude, apply what it decides, and make a new set if needed. */
@@ -421,10 +434,15 @@ export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string)
   persist();
 
   let feed: DailyFeed | null = null;
+  let notice: string | undefined;
   if (r.new_set || r.focus || r.add_rows.length) {
-    feed = await newSet(keys, r.focus, onProgress, settingsChanged);
+    try {
+      feed = await newSet(keys, r.focus, onProgress, settingsChanged);
+    } catch (e) {
+      notice = `Saved, but no new set right now: ${e instanceof Error ? e.message : String(e)}`;
+    }
   }
-  return { reply: r.reply, feed, changes };
+  return { reply: r.reply, feed, changes, notice };
 }
 
 /** Remove something you told Wander, from Settings. */
@@ -588,4 +606,31 @@ export function resetLearning() {
 export function rebuildToday() {
   if (state.feed) state.feed = { ...state.feed, date: '' };
   persist();
+}
+
+// ---------------------------------------------------------------- syncing what you told Wander
+
+export interface Told {
+  pinned: string[];
+  rules: string[];
+  customRows: CustomRow[];
+}
+
+export function getTold(): Told {
+  return { pinned: state.pinned, rules: state.rules, customRows: state.customRows };
+}
+
+/** Union of this device's and another device's rows, interests and rules (removals don't sync). */
+export function mergeTold(other: Told): Told {
+  const lower = (x: string) => x.trim().toLowerCase();
+  const union = (a: string[], b: string[]) => [...a, ...b.filter((x) => !a.some((y) => lower(y) === lower(x)))];
+  const rows = [...state.customRows];
+  for (const r of other.customRows ?? []) if (!rows.some((x) => lower(x.title) === lower(r.title))) rows.push(r);
+  const before = JSON.stringify(getTold());
+  state.pinned = union(state.pinned, other.pinned ?? []);
+  state.rules = union(state.rules, other.rules ?? []);
+  state.customRows = rows.slice(-4);
+  if (JSON.stringify(getTold()) !== before) state.prepared = null;
+  persist();
+  return getTold();
 }

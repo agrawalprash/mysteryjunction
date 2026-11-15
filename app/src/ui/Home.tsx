@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
-import { buildTodaysFeed, getState, newSet, setsLeftToday, surprise, SURPRISES_PER_DAY, todaysFeed } from '../lib/wander.ts';
+import { buildTodaysFeed, getState, newSet, onFeedChanged, setsLeftToday, surprise, SURPRISES_PER_DAY, todaysFeed } from '../lib/wander.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { useTv, type Screen } from './App.tsx';
 import { focusFirst } from '../lib/spatialNav.ts';
@@ -29,6 +29,16 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
       setAsking({ voice });
       setOverlayCloser(() => setAsking(null));
     },
+    [],
+  );
+
+  // A new set can arrive from elsewhere (a request from your phone, or an Ask that finished after closing).
+  useEffect(
+    () =>
+      onFeedChanged(() => {
+        setFeed(todaysFeed());
+        setOpened(new Set(getState().opened));
+      }),
     [],
   );
 

@@ -23,6 +23,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DevicePlugin.class);
         registerPlugin(UpdaterPlugin.class);
         registerPlugin(VoicePlugin.class);
+        registerPlugin(DiagnosticsPlugin.class);
+        registerPlugin(LinkPlugin.class);
         super.onCreate(savedInstanceState);
         if (bridge != null) {
             bridge.getWebView().setWebChromeClient(new FullscreenChromeClient(bridge));
