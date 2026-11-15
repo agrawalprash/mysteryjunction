@@ -23,6 +23,7 @@ export function Search({
   open,
   initialQuery,
   initialTarget,
+  startWithVoice,
 }: {
   keys: ApiKeys;
   onBack: () => void;
@@ -31,6 +32,8 @@ export function Search({
   initialQuery?: string;
   /** Opened from the TV remote screen: results go to the TV by default. */
   initialTarget?: 'here' | 'tv';
+  /** Start listening straight away (phone). */
+  startWithVoice?: boolean;
 }) {
   const tv = useTv();
   const tvLink = !tv ? linkedTv() : null;
@@ -74,6 +77,16 @@ export function Search({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
+  // One tap from the header: listen right away, then search (on the TV when linked).
+  const listened = useRef(false);
+  useEffect(() => {
+    if (startWithVoice && !tv && !listened.current) {
+      listened.current = true;
+      speak();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startWithVoice]);
+
   const speak = async () => {
     setError('');
     try {
@@ -102,7 +115,7 @@ export function Search({
             runQuery(q);
           }}
         >
-          <input autoFocus={!tv} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search YouTube" enterKeyHint="search" />
+          <input autoFocus={!tv && !startWithVoice} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search YouTube" enterKeyHint="search" />
         </form>
         <button className="icon-btn mic-icon" aria-label="Search by voice" onClick={speak} disabled={busy} data-autofocus>
           🎤
