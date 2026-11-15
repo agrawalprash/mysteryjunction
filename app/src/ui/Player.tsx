@@ -5,6 +5,7 @@ import { decodeEntities, formatAge, formatCount, formatDuration } from '../lib/f
 import { loadYouTubeApi, type YTPlayer } from '../lib/ytPlayer.ts';
 import { hideChannel, lessLikeThis, markOpened, recordWatch, related } from '../lib/wander.ts';
 import { VideoCard } from './VideoCard.tsx';
+import { useTv } from './App.tsx';
 
 const TIER_EXPLAIN: Record<Candidate['tier'], string> = {
   core: 'One of your interests, from an angle you haven’t seen yet.',
@@ -26,7 +27,10 @@ const PLAYER_ERRORS: Record<number, string> = {
 };
 
 export function Player({ video, onBack, open }: { video: Candidate; onBack: () => void; open: (v: Candidate) => void }) {
+  const tv = useTv();
   const holder = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<YTPlayer | null>(null);
+  const [hint, setHint] = useState(tv);
   const watchedSec = useRef(0);
   const duration = useRef(video.durationSec);
   const [error, setError] = useState('');
@@ -49,11 +53,14 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
           videoId: video.id,
           width: '100%',
           height: '100%',
-          playerVars: { autoplay: 1, playsinline: 1, rel: 0, origin: window.location.origin },
+          playerVars: { autoplay: 1, playsinline: 1, rel: 0, hl: 'en', origin: window.location.origin },
           events: {
             onReady: (e) => {
+              playerRef.current = e.target;
               const d = e.target.getDuration();
               if (d) duration.current = d;
+              // On TV the remote talks to our wrapper, never to the iframe directly.
+              if (tv) e.target.getIframe().setAttribute('tabindex', '-1');
             },
             onError: (e) => setError(PLAYER_ERRORS[e.data] ?? `YouTube couldn’t play this (error ${e.data}).`),
           },
@@ -76,9 +83,33 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
       } catch {
         /* ignore */
       }
+      playerRef.current = null;
       recordWatch(video, watchedSec.current, Math.round(duration.current));
     };
-  }, [video]);
+  }, [video, tv]);
+
+  useEffect(() => {
+    if (!hint) return;
+    const t = window.setTimeout(() => setHint(false), 6000);
+    return () => clearTimeout(t);
+  }, [hint]);
+
+  // TV remote: OK toggles play/pause, left/right seek, down moves on to the info below.
+  const onRemoteKey = (e: React.KeyboardEvent) => {
+    const p = playerRef.current;
+    if (!tv || !p) return;
+    const playing = p.getPlayerState() === 1;
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'MediaPlayPause') {
+      if (playing) p.pauseVideo();
+      else p.playVideo();
+    } else if (e.key === 'MediaPlay') p.playVideo();
+    else if (e.key === 'MediaPause') p.pauseVideo();
+    else if (e.key === 'ArrowLeft' || e.key === 'MediaRewind') p.seekTo(Math.max(0, p.getCurrentTime() - 10), true);
+    else if (e.key === 'ArrowRight' || e.key === 'MediaFastForward') p.seekTo(p.getCurrentTime() + 10, true);
+    else return;
+    e.preventDefault();
+    setHint(false);
+  };
 
   const lr = likeRatio(video);
 
@@ -89,7 +120,12 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
           <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z" /></svg>
         </button>
       </header>
-      <div className={`player-frame${isShort ? ' player-short' : ''}`} ref={holder}>
+      <div
+        className={`player-frame${isShort ? ' player-short' : ''}`}
+        ref={holder}
+        {...(tv ? { tabIndex: 0, 'data-own-keys': true, 'data-autofocus': true, onKeyDown: onRemoteKey } : {})}
+      >
+        {tv && hint && !error && <div className="tv-hint">OK play / pause · ◀ ▶ skip 10s · ▼ details and more</div>}
         {error && (
           <div className="player-error">
             <p>{error}</p>
@@ -148,6 +184,15 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
             <dl>
               <dt>Topic</dt>
               <dd>{video.topic}</dd>
+              {video.facets && (
+                <>
+                  <dt>Claude says</dt>
+                  <dd>
+                    {video.facets.subject} · {video.facets.format} · {video.facets.pace} · {video.facets.depth}
+                    {video.facets.clickbait ? ' · looks clickbaity' : ''}
+                  </dd>
+                </>
+              )}
               <dt>Distance</dt>
               <dd>{video.tier}</dd>
               {video.query && (

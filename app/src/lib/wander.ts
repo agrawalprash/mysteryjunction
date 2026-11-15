@@ -1,29 +1,39 @@
-// App state and the daily pipeline: plan -> search -> pick -> remember.
+// App state and the daily pipeline:
+//   plan (Claude) -> search (YouTube) -> describe (Claude) -> pick (engine) -> remember.
+// Plus a weekly taste profile written by Claude from the viewer's history.
 
-import type { Candidate, DailyFeed, Direction, WatchRecord } from '../engine/types.ts';
+import type { Candidate, DailyFeed, Direction, ExitRecord, TasteProfile, WatchRecord } from '../engine/types.ts';
 import {
+  addFacetSignal,
   addSignal,
   coreInterests,
   IGNORED_SIGNAL,
   LESS_LIKE_THIS_SIGNAL,
+  rankTopics,
   recentMisses,
   SEARCH_SIGNAL,
   watchSignal,
   type Profile,
 } from '../engine/profile.ts';
-import { assembleFeed, assembleSurprise, relatedFromPool, type FeedContext } from '../engine/feed.ts';
+import { assembleFeed, assembleSurprise, eligible, relatedFromPool, type FeedContext } from '../engine/feed.ts';
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
 import { AUTO_BUDGET, fetchDirection, quotaUsed, searchIds, videoDetails, YouTubeError } from './youtube.ts';
-import { planDay, planSurprise, type PlannerInput } from './claude.ts';
-import type { ApiKeys } from './keys.ts';
+import { describeVideos, planDay, planSurprise, writeTasteProfile, type ClaudeAuth, type PlannerInput } from './claude.ts';
+import { claudeAuth, type ApiKeys } from './keys.ts';
+import { getSettings } from './settings.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 export const SURPRISES_PER_DAY = 3;
+/** Most videos Claude describes in one go (about 5 parallel batches). */
+const MAX_DESCRIBE = 200;
 
 interface State {
   profile: Profile;
+  facetProfile: Profile;
   history: WatchRecord[];
+  exits: ExitRecord[];
+  dismissed: string[];
   shownCounts: Record<string, number>;
   pool: Candidate[];
   feed: DailyFeed | null;
@@ -31,18 +41,36 @@ interface State {
   muted: string[];
   searches: { q: string; at: number }[];
   recentTopics: { name: string; at: number }[];
+  taste: TasteProfile | null;
 }
 
 function fresh(): State {
-  return { profile: {}, history: [], shownCounts: {}, pool: [], feed: null, opened: [], muted: [], searches: [], recentTopics: [] };
+  return {
+    profile: {},
+    facetProfile: {},
+    history: [],
+    exits: [],
+    dismissed: [],
+    shownCounts: {},
+    pool: [],
+    feed: null,
+    opened: [],
+    muted: [],
+    searches: [],
+    recentTopics: [],
+    taste: null,
+  };
 }
 
-let state: State = load<State>('state', fresh());
+// Older saves may lack newer fields; fill them in.
+let state: State = { ...fresh(), ...load<Partial<State>>('state', {}) };
 
 function persist() {
   // Keep storage bounded.
   const now = Date.now();
   state.history = state.history.slice(-500);
+  state.exits = state.exits.slice(-200);
+  state.dismissed = state.dismissed.slice(-50);
   state.pool = state.pool.filter((c) => now - c.fetchedAt < 6 * DAY).slice(-800);
   state.searches = state.searches.slice(-30);
   state.recentTopics = state.recentTopics.filter((t) => now - t.at < 7 * DAY).slice(-120);
@@ -60,6 +88,7 @@ export function getState(): Readonly<State> {
 function ctx(): FeedContext {
   return {
     profile: state.profile,
+    facetProfile: state.facetProfile,
     now: Date.now(),
     shownCounts: state.shownCounts,
     watchedIds: new Set(state.history.map((h) => h.videoId)),
@@ -76,7 +105,12 @@ function plannerInput(): PlannerInput {
     recentWatches: state.history.slice(-15).map((h) => ({ title: h.title, topic: h.topic, fraction: h.fraction })),
     recentSearches: state.searches.slice(-8).map((s) => s.q),
     recentTopics: [...new Set(state.recentTopics.map((t) => t.name))].slice(-60),
-    language: navigator.language || 'en',
+    formatLeanings: rankTopics(state.facetProfile, now)
+      .filter((t) => Math.abs(t.score) > 0.15)
+      .slice(0, 10)
+      .map((t) => ({ name: t.name, score: t.score })),
+    taste: state.taste,
+    language: getSettings().language,
   };
 }
 
@@ -109,11 +143,12 @@ async function runDirections(directions: Direction[], keys: ApiKeys, onProgress:
   let done = 0;
   let firstError: unknown = null;
   const queue = [...todo];
+  const language = getSettings().language;
   const worker = async () => {
     while (queue.length) {
       const d = queue.shift()!;
       try {
-        results.push(...(await fetchDirection(d, keys.youtube, navigator.language?.split('-')[0])));
+        results.push(...(await fetchDirection(d, keys.youtube, language)));
       } catch (e) {
         firstError ??= e;
         // A bad key or exhausted quota won't fix itself mid-run.
@@ -128,9 +163,24 @@ async function runDirections(directions: Direction[], keys: ApiKeys, onProgress:
   return results;
 }
 
+/** Ask Claude to describe the videos that could actually be shown and aren't described yet. */
+async function describe(found: Candidate[], auth: ClaudeAuth | null, onProgress: (msg: string) => void) {
+  if (!auth) return;
+  const c = ctx();
+  const known = new Map(state.pool.filter((p) => p.facets).map((p) => [p.id, p.facets!]));
+  for (const v of found) if (!v.facets && known.has(v.id)) v.facets = known.get(v.id);
+  const todo = found
+    .filter((v) => !v.facets && eligible(v, c, v.tier === 'shorts'))
+    .slice(0, MAX_DESCRIBE);
+  if (todo.length === 0) return;
+  onProgress(`Claude is looking at ${todo.length} videos…`);
+  const facets = await describeVideos(auth, todo);
+  for (const v of found) if (facets[v.id]) v.facets = facets[v.id];
+}
+
 function mergePool(incoming: Candidate[]) {
   const byId = new Map(state.pool.map((c) => [c.id, c]));
-  for (const c of incoming) byId.set(c.id, c);
+  for (const c of incoming) byId.set(c.id, { ...c, facets: c.facets ?? byId.get(c.id)?.facets });
   state.pool = [...byId.values()];
 }
 
@@ -170,12 +220,13 @@ export function buildTodaysFeed(keys: ApiKeys, onProgress: (msg: string) => void
 }
 
 async function buildFeed(keys: ApiKeys, onProgress: (msg: string) => void): Promise<DailyFeed> {
+  const auth = claudeAuth(keys);
   let directions: Direction[];
   let note = '';
-  if (keys.anthropic) {
+  if (auth) {
     onProgress('Asking Claude for fresh directions…');
     try {
-      const plan = await planDay(keys.anthropic, plannerInput());
+      const plan = await planDay(auth, plannerInput());
       directions = plan.directions;
       note = plan.note;
     } catch (e) {
@@ -189,6 +240,7 @@ async function buildFeed(keys: ApiKeys, onProgress: (msg: string) => void): Prom
 
   onProgress(`Exploring ${directions.length} directions…`);
   const found = await runDirections(directions, keys, onProgress);
+  await describe(found, auth, onProgress);
   onProgress('Picking today’s set…');
 
   settlePreviousFeed();
@@ -200,6 +252,8 @@ async function buildFeed(keys: ApiKeys, onProgress: (msg: string) => void): Prom
   state.feed = feed;
   state.opened = [];
   persist();
+  // Weekly: refresh Claude's read on your taste in the background, for tomorrow's plan.
+  void maybeRefreshTaste(keys).catch((e) => console.warn('Taste profile refresh failed', e));
   return feed;
 }
 
@@ -207,20 +261,22 @@ export async function surprise(keys: ApiKeys, onProgress: (msg: string) => void)
   const feed = todaysFeed();
   if (!feed) throw new Error('No feed yet');
   if (feed.surprisesUsed >= SURPRISES_PER_DAY) return feed;
-  let directions: Direction[];
+  const auth = claudeAuth(keys);
+  let directions: Direction[] = [];
   onProgress('Finding something unexpected…');
-  if (keys.anthropic) {
+  if (auth) {
     try {
-      directions = await planSurprise(keys.anthropic, plannerInput());
+      directions = await planSurprise(auth, plannerInput());
     } catch {
       directions = [];
     }
-  } else directions = [];
+  }
   if (directions.length === 0) {
     const recent = new Set(state.recentTopics.map((t) => t.name));
     directions = sampleWithout(WILDCARD_TOPICS, 3, recent).map((t) => ({ topic: t, query: t, tier: 'wildcard', because: 'A wildcard' }));
   }
   const found = await runDirections(directions, keys, onProgress);
+  await describe(found, auth, onProgress);
   mergePool(found);
   // Only use what this surprise just found, so it's genuinely new.
   const items = assembleSurprise(found, ctx(), new Set(feedIds(feed)));
@@ -236,6 +292,39 @@ export async function surprise(keys: ApiKeys, onProgress: (msg: string) => void)
   return state.feed;
 }
 
+// ---------------------------------------------------------------- taste profile
+
+let tasteRun: Promise<TasteProfile | null> | null = null;
+
+/** Rewrite the taste profile weekly (or when forced), once there's enough history. */
+export function maybeRefreshTaste(keys: ApiKeys, force = false): Promise<TasteProfile | null> {
+  const auth = claudeAuth(keys);
+  if (!auth) return Promise.resolve(null);
+  const t = state.taste;
+  const enoughHistory = state.history.length >= 5;
+  const stale = !t || (Date.now() - t.generatedAt > 7 * DAY && state.history.length - t.watchesSeen >= 3);
+  if (!force && !(enoughHistory && stale)) return Promise.resolve(t);
+  if (force && state.history.length === 0) throw new Error('Watch a few videos first.');
+  tasteRun ??= writeTasteProfile(auth, {
+    watches: state.history.slice(-150),
+    exits: state.exits.slice(-60),
+    searches: state.searches.slice(-20).map((s) => s.q),
+    dismissed: state.dismissed,
+    previous: state.taste,
+  })
+    .then((profile) => {
+      state.taste = { ...profile, watchesSeen: state.history.length };
+      persist();
+      return state.taste;
+    })
+    .finally(() => {
+      tasteRun = null;
+    });
+  return tasteRun;
+}
+
+// ---------------------------------------------------------------- signals
+
 export function markOpened(c: Candidate) {
   if (!state.opened.includes(c.id)) state.opened.push(c.id);
   persist();
@@ -245,7 +334,9 @@ export function recordWatch(c: Candidate, watchedSec: number, durationSec: numbe
   const dur = durationSec || c.durationSec;
   const fraction = dur > 0 ? Math.min(1, watchedSec / dur) : 0;
   const now = Date.now();
-  state.profile = addSignal(state.profile, c.topic, watchSignal(watchedSec, dur), now, c.tier, { watched: watchedSec >= 20, exposed: true });
+  const signal = watchSignal(watchedSec, dur);
+  state.profile = addSignal(state.profile, c.topic, signal, now, c.tier, { watched: watchedSec >= 20, exposed: true });
+  state.facetProfile = addFacetSignal(state.facetProfile, c.facets, signal, now);
   if (watchedSec >= 20) {
     state.history = state.history.filter((h) => !(h.videoId === c.id && now - h.at < DAY));
     state.history.push({
@@ -260,13 +351,19 @@ export function recordWatch(c: Candidate, watchedSec: number, durationSec: numbe
       watchedSec,
       fraction,
       at: now,
+      facets: c.facets,
     });
+  } else {
+    state.exits.push({ title: c.title, topic: c.topic, facets: c.facets, at: now });
   }
   persist();
 }
 
 export function lessLikeThis(c: Candidate) {
-  state.profile = addSignal(state.profile, c.topic, LESS_LIKE_THIS_SIGNAL, Date.now(), c.tier);
+  const now = Date.now();
+  state.profile = addSignal(state.profile, c.topic, LESS_LIKE_THIS_SIGNAL, now, c.tier);
+  state.facetProfile = addFacetSignal(state.facetProfile, c.facets, LESS_LIKE_THIS_SIGNAL / 2, now);
+  state.dismissed.push(c.facets ? `${c.topic} (${c.facets.subject}, ${c.facets.format})` : c.topic);
   state.shownCounts[c.id] = (state.shownCounts[c.id] ?? 0) + 3;
   persist();
 }
@@ -294,7 +391,7 @@ export async function search(q: string, keys: ApiKeys): Promise<Candidate[]> {
   state.searches.push({ q: query, at: now });
   state.profile = addSignal(state.profile, query, SEARCH_SIGNAL, now, 'search');
   persist();
-  const ids = await searchIds(query, keys.youtube, { maxResults: 20, language: navigator.language?.split('-')[0] });
+  const ids = await searchIds(query, keys.youtube, { maxResults: 20, language: getSettings().language });
   const videos = await videoDetails(ids, keys.youtube);
   const results = videos.map((v) => ({ ...v, topic: query, tier: 'search' as const, because: `You searched “${query}”`, query, fetchedAt: now }));
   mergePool(results);

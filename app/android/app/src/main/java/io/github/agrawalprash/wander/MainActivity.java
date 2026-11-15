@@ -19,6 +19,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(DevicePlugin.class);
         super.onCreate(savedInstanceState);
         if (bridge != null) {
             bridge.getWebView().setWebChromeClient(new FullscreenChromeClient(bridge));

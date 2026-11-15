@@ -52,6 +52,8 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
           cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/Wander-$VERSION_NAME.apk"
+          # Same file under a fixed name, so .../releases/latest/download/Wander.apk always works (handy on TV).
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/Wander.apk"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -65,7 +67,9 @@ jobs:
           name: Wander ${{ env.VERSION_NAME }}
           target_commitish: ${{ github.sha }}
           make_latest: true
-          files: Wander-${{ env.VERSION_NAME }}.apk
+          files: |
+            Wander-${{ env.VERSION_NAME }}.apk
+            Wander.apk
           body: |
             Built from `${{ github.ref_name }}` @ ${{ github.sha }}.
             On your phone: tap the .apk below to download, then open it to install or update.

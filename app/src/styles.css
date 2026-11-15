@@ -5,6 +5,7 @@
   --text: #f1f1f1;
   --muted: #aaaaaa;
   --accent: #ff4e45;
+  --brand: #ffb020;
   --accent-2: #3ea6ff;
   --good: #4caf7d;
   --bad: #e36464;
@@ -39,8 +40,8 @@ a { color: var(--accent-2); }
 .topbar-actions { display: flex; gap: 4px; }
 .logo { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; display: flex; align-items: center; gap: 6px; }
 .logo-mark {
-  display: inline-grid; place-items: center; width: 28px; height: 20px; border-radius: 6px;
-  background: var(--accent); color: white; font-size: 11px;
+  display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--brand); color: #0f0f0f; font-size: 16px; line-height: 1;
 }
 .icon-btn {
   background: none; border: 0; width: 40px; height: 40px; border-radius: 50%;
@@ -177,3 +178,64 @@ a { color: var(--accent-2); }
 .bar-pos { background: var(--good); }
 .bar-neg { background: var(--bad); }
 .version { text-align: center; }
+
+/* Setup / settings extras */
+.tip { background: #1d2a3a; color: #cfe3ff; padding: 10px 12px; border-radius: 10px; font-size: 14px; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--accent-2); text-align: left; cursor: pointer; font-size: 14px; }
+.field { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.field select {
+  background: var(--surface-2); color: var(--text); border: 1px solid #3a3a3a; border-radius: 8px; padding: 8px; font-size: 14px;
+}
+.taste p { margin: 0 0 8px; }
+.panel h4 { margin: 14px 0 4px; font-size: 14px; color: var(--muted); }
+
+/* ------------------------------------------------------------ TV layout */
+body.tv { font-size: 22px; }
+body.tv .screen { padding-left: 48px; padding-right: 48px; padding-bottom: 48px; }
+body.tv .topbar { padding: 24px 0 12px; background: rgba(15, 15, 15, 0.96); }
+body.tv .logo { font-size: 30px; }
+body.tv .logo-mark { width: 36px; height: 36px; font-size: 22px; }
+body.tv .icon-btn { width: 56px; height: 56px; }
+body.tv .icon-btn svg { width: 32px; height: 32px; }
+body.tv .row { margin-top: 32px; }
+body.tv .row h2 { margin: 0; font-size: 28px; }
+body.tv .row-sub { margin: 4px 0 14px; font-size: 18px; }
+body.tv .row-scroll { padding: 10px 6px 14px; gap: 22px; scroll-padding-inline: 48px; }
+body.tv .card-row { flex: 0 0 340px; }
+body.tv .card-short { flex: 0 0 170px; }
+body.tv .card-title { font-size: 20px; }
+body.tv .card-channel, body.tv .card-meta, body.tv .card-because { font-size: 16px; }
+body.tv .planner-note { margin: 4px 0 0; font-size: 18px; }
+body.tv .the-end { margin: 48px 0 24px; }
+
+/* A focus highlight you can see from the sofa. */
+body.tv :focus { outline: none; }
+body.tv .card { transition: transform 0.12s ease; border-radius: 14px; }
+body.tv .card:focus { transform: scale(1.06); }
+body.tv .card:focus .thumb { box-shadow: 0 0 0 4px #fff, 0 10px 30px rgba(0, 0, 0, 0.6); }
+body.tv .card:focus .card-title { color: #fff; }
+body.tv button:not(.card):focus, body.tv a:focus, body.tv select:focus, body.tv input:focus, body.tv summary:focus {
+  box-shadow: 0 0 0 4px #fff;
+}
+body.tv .chip, body.tv .btn { font-size: 20px; padding: 12px 22px; }
+
+/* TV player: the video fills the screen; details and more are one press of ▼ away. */
+body.tv .player-screen { padding: 0; }
+body.tv .player-screen .topbar { display: none; }
+body.tv .player-frame { width: 100vw; height: 100vh; aspect-ratio: auto; }
+body.tv .player-frame:focus { box-shadow: none; }
+body.tv .player-short { width: auto; height: 100vh; aspect-ratio: 9 / 16; }
+body.tv .player-info, body.tv .related { padding-left: 48px; padding-right: 48px; }
+body.tv .player-info h1 { font-size: 30px; }
+body.tv .card-list { padding: 10px 0; }
+.tv-hint {
+  position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); z-index: 3;
+  background: rgba(0, 0, 0, 0.75); padding: 10px 20px; border-radius: 999px; font-size: 20px; pointer-events: none;
+}
+
+/* Setup on TV */
+body.tv .setup { max-width: 900px; }
+body.tv .setup input { font-size: 22px; }
+body.tv .card-list .thumb { flex: 0 0 360px; }
+body.tv .card-list { padding: 10px 6px; }
+body.tv .related h3 { font-size: 26px; margin: 28px 0 8px; }

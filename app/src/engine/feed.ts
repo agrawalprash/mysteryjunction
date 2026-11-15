@@ -3,6 +3,7 @@
 import type { Candidate, DailyFeed, FeedRow, Video, WatchRecord } from './types.ts';
 import {
   coreInterests,
+  facetBoost,
   freshness,
   interest,
   normalizeTopic,
@@ -45,6 +46,8 @@ export interface FeedContext {
   watchedIds: Set<string>;
   mutedChannels: Set<string>;
   history: WatchRecord[];
+  /** Learned format/pace/depth leanings (empty if Claude hasn't described any videos yet). */
+  facetProfile?: Profile;
   rng?: () => number;
 }
 
@@ -52,10 +55,11 @@ interface Used {
   ids: Set<string>;
   channels: Map<string, number>;
   topics: Map<string, number>;
+  formats: Map<string, number>;
 }
 
 function newUsed(): Used {
-  return { ids: new Set(), channels: new Map(), topics: new Map() };
+  return { ids: new Set(), channels: new Map(), topics: new Map(), formats: new Map() };
 }
 
 function markUsed(used: Used, c: Candidate) {
@@ -63,7 +67,11 @@ function markUsed(used: Used, c: Candidate) {
   used.channels.set(c.channelId, (used.channels.get(c.channelId) ?? 0) + 1);
   const t = normalizeTopic(c.topic);
   used.topics.set(t, (used.topics.get(t) ?? 0) + 1);
+  if (c.facets) used.formats.set(c.facets.format, (used.formats.get(c.facets.format) ?? 0) + 1);
 }
+
+/** At most this many videos of one format (documentary, lecture…) across the whole feed. */
+export const FORMAT_CAP = 7;
 
 /**
  * Greedy pick with diversity caps: at most `channelCap` videos per channel and
@@ -89,6 +97,7 @@ function pick(
       if (used.ids.has(c.id)) continue;
       if ((used.channels.get(c.channelId) ?? 0) >= caps.channelCap + relax) continue;
       if ((used.topics.get(normalizeTopic(c.topic)) ?? 0) >= caps.topicCap + relax) continue;
+      if (c.facets && (used.formats.get(c.facets.format) ?? 0) >= FORMAT_CAP + relax * 3) continue;
       out.push(c);
       markUsed(used, c);
     }
@@ -119,6 +128,8 @@ export function makeScorer(ctx: FeedContext) {
       if (c.tier === 'core') s *= 1 + Math.max(0, Math.min(interest(t, ctx.now), 2)) * 0.3;
     }
     if (misses.has(key)) s *= 0.6;
+    // Learned format/pace/depth leanings, and a penalty for clickbait.
+    s *= facetBoost(ctx.facetProfile ?? {}, c.facets, ctx.now);
     // A little randomness so two equally good videos don't always tie the same way.
     s *= 0.8 + rng() * 0.4;
     return s;
@@ -142,6 +153,7 @@ function historyToCandidate(w: WatchRecord): Candidate {
     because: 'You watched this to the end',
     query: '',
     fetchedAt: w.at,
+    facets: w.facets,
   };
 }
 

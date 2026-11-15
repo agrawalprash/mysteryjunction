@@ -108,6 +108,7 @@ export async function videoDetails(ids: string[], key: string): Promise<Video[]>
         likes: Number(it.statistics?.likeCount ?? 0),
         comments: Number(it.statistics?.commentCount ?? 0),
         thumb: (th.high ?? th.medium ?? th.default)?.url ?? `https://i.ytimg.com/vi/${it.id}/hqdefault.jpg`,
+        description: (it.snippet?.description ?? '').slice(0, 300),
       });
     }
   }
