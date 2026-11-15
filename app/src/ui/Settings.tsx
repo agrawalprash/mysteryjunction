@@ -6,6 +6,7 @@ import { UpdateBanner } from './UpdateBanner.tsx';
 import { DiagnosePanel } from './DiagnosePanel.tsx';
 import { PhoneLinkPanel, TvLinkPanel } from './LinkPanel.tsx';
 import { FeedbackPanel } from './FeedbackPanel.tsx';
+import { FEEDBACK_ENABLED } from '../lib/feedback.ts';
 import { FeedbackSheet } from './FeedbackSheet.tsx';
 import { setOverlayCloser } from '../lib/overlay.ts';
 import { useTv } from './App.tsx';
@@ -227,14 +228,16 @@ export function Settings({
 
       {tv ? <TvLinkPanel /> : <PhoneLinkPanel keys={keys} />}
 
-      <FeedbackPanel
-        keys={keys}
-        onKeys={onKeys}
-        openFeedback={() => {
-          setFeedbackOpen(true);
-          setOverlayCloser(() => setFeedbackOpen(false));
-        }}
-      />
+      {FEEDBACK_ENABLED && (
+        <FeedbackPanel
+          keys={keys}
+          onKeys={onKeys}
+          openFeedback={() => {
+            setFeedbackOpen(true);
+            setOverlayCloser(() => setFeedbackOpen(false));
+          }}
+        />
+      )}
 
       <section className="panel">
         <h3>What Wander has learned</h3>

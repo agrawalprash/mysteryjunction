@@ -6,6 +6,9 @@ import { load, save } from './store.ts';
 
 declare const __APP_VERSION__: string;
 
+/** In-app feedback is built but switched off until the GitHub inbox is set up. */
+export const FEEDBACK_ENABLED = false;
+
 const REPO = 'agrawalprash/mysteryjunction';
 const INBOX_BRANCH = 'claude/feedback-inbox';
 const API = 'https://api.github.com';

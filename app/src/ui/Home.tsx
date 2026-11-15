@@ -10,6 +10,7 @@ import { onVoiceKey } from '../lib/voice.ts';
 import { setOverlayCloser } from '../lib/overlay.ts';
 import { AskSheet } from './AskSheet.tsx';
 import { FeedbackSheet } from './FeedbackSheet.tsx';
+import { FEEDBACK_ENABLED } from '../lib/feedback.ts';
 import { UpdateBanner } from './UpdateBanner.tsx';
 
 export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Candidate) => void; go: (s: Screen) => void; visible: boolean }) {
@@ -150,9 +151,11 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
               ✦ Ask
             </button>
           )}
-          <button className="icon-btn" aria-label="Feedback to Claude" onClick={openFeedback}>
-            💬
-          </button>
+          {FEEDBACK_ENABLED && (
+            <button className="icon-btn" aria-label="Feedback to Claude" onClick={openFeedback}>
+              💬
+            </button>
+          )}
           <button className="icon-btn" aria-label="Search" onClick={() => go({ kind: 'search' })}>
             <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14" /></svg>
           </button>
