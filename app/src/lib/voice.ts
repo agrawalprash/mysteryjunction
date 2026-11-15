@@ -16,7 +16,11 @@ export async function listen(prompt = 'What are you in the mood for?'): Promise<
     // Web preview: no recogniser, so fall back to typing.
     return window.prompt(prompt) ?? '';
   }
-  return (await Voice.listen({ language: 'en-US', prompt })).text;
+  // Some TVs' voice screens never report back; don't wait forever.
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('The voice screen didn’t answer. Voice input may not work on this device.')), 40_000),
+  );
+  return (await Promise.race([Voice.listen({ language: 'en-US', prompt }), timeout])).text;
 }
 
 /** Called whenever the remote's mic/search button reaches the app. */

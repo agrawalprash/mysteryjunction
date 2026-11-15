@@ -112,7 +112,7 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'system_voice_test',
     description:
-      'Open the system\'s own voice-input screen (android.speech.action.RECOGNIZE_SPEECH, the same path YouTube uses) in a language, and optionally have the device speak a known phrase after delay_ms so the owner doesn\'t have to talk. Returns the result code (OK / CANCELED / NO_MATCH / CLIENT / SERVER / NETWORK / AUDIO error) and recognised text. Whether the remote\'s mic hears the TV speaker without the mic button held is itself something to find out; if needed, ask the owner to hold the button (only hold, not speak).',
+      'Open the system\'s own voice-input screen (android.speech.action.RECOGNIZE_SPEECH, the same path YouTube uses) in a language, and optionally have the device speak a known phrase after delay_ms so the owner doesn\'t have to talk. Returns the result code (OK / CANCELED / NO_MATCH / CLIENT / SERVER / NETWORK / AUDIO error) and recognised text, or timedOut after 40 s if the screen never reports back (itself a finding). Whether the remote\'s mic hears the TV speaker without the mic button held is itself something to find out; if needed, ask the owner to hold the button (only hold, not speak).',
     input_schema: {
       type: 'object',
       properties: { language: str, speak_text: str, delay_ms: { type: 'integer' } },
@@ -153,10 +153,24 @@ Background: on Android TV the remote's mic streams over Bluetooth only while the
 
 const MAX_STEPS = 24;
 
+/** How long each kind of check may take before Claude is told it timed out (0 = waits for the owner). */
+const TOOL_TIME_LIMIT_MS: Record<string, number> = {
+  ask_user: 0,
+  speech_test: 0, // starts with a question to the owner; the native test itself stops after 15 s
+  audio_probe: 0, // likewise; recording is at most 10 s
+  system_voice_test: 40_000,
+  speak_aloud: 30_000,
+  device_report: 45_000,
+  http_check: 20_000,
+  run_command: 20_000,
+};
+
 export interface SessionDeps {
   /** Sends one request, streaming text to onText(snapshotOfCurrentTextBlock). */
   send: (params: Anthropic.Beta.MessageCreateParams, onText: (snapshot: string) => void, signal: { abort?: () => void }) => Promise<Anthropic.Beta.BetaMessage>;
   runTool: typeof runTool;
+  /** Overrides the per-tool time limits (tests). */
+  limits?: Record<string, number>;
 }
 
 /**
@@ -208,6 +222,46 @@ export class DiagnosisSession {
   stop() {
     this.cancelled = true;
     this.abortHandle.abort?.();
+    // Also give up on a check that's still waiting (e.g. a voice screen that never answers).
+    this.cancelWaiting?.();
+  }
+
+  private cancelWaiting: (() => void) | null = null;
+
+  /** Runs a tool, but never waits forever: each kind of check has a time limit, and Stop ends the wait. */
+  private runWithLimit(name: string, input: Json): Promise<unknown> {
+    const limitMs = (this.deps.limits ?? TOOL_TIME_LIMIT_MS)[name] ?? 30_000;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const done = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.cancelWaiting = null;
+        fn();
+      };
+      const timer = limitMs
+        ? setTimeout(
+            () =>
+              done(() =>
+                resolve({
+                  timedOut: true,
+                  afterSeconds: limitMs / 1000,
+                  note:
+                    name === 'system_voice_test'
+                      ? 'The system voice screen gave no result to the app within the time limit (it may still be open, may have closed without reporting, or may not return results to apps on this device). Ask the owner what they see on screen.'
+                      : 'No result within the time limit.',
+                }),
+              ),
+            limitMs,
+          )
+        : 0;
+      this.cancelWaiting = () => done(() => reject(new Error('Stopped by the owner.')));
+      this.deps.runTool(name, input, this.ui).then(
+        (v) => done(() => resolve(v)),
+        (e) => done(() => reject(e)),
+      );
+    });
   }
 
   /** Adds content to the conversation as the owner, closing any tool calls a Stop left open. */
@@ -277,7 +331,7 @@ export class DiagnosisSession {
           let output: string;
           let isError = false;
           try {
-            output = JSON.stringify(await this.deps.runTool(b.name, input, this.ui), null, 1);
+            output = JSON.stringify(await this.runWithLimit(b.name, input), null, 1);
           } catch (e) {
             output = `Tool failed: ${e instanceof Error ? e.message : String(e)}`;
             isError = true;

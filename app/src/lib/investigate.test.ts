@@ -119,3 +119,39 @@ test('after Stop, open tool calls are closed so the conversation can continue', 
   assert.ok(last.content.some((c: any) => c.type === 'tool_result' && c.tool_use_id === 't1'));
   assert.ok(last.content.some((c: any) => c.type === 'text' && c.text === 'carry on'));
 });
+
+test('a check that never answers times out, and Claude is told so', async () => {
+  const calls: any[] = [];
+  const script: any[] = [
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'system_voice_test', input: { language: 'en-US', speak_text: 'hi', delay_ms: 1000 } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'The voice screen never answered.' }] },
+  ];
+  const { ui } = recorder();
+  const session = new DiagnosisSession({ apiKey: 'x' }, ui, {
+    send: async (p: any) => {
+      calls.push(structuredClone(p));
+      return script.shift();
+    },
+    runTool: () => new Promise(() => {}), // hangs forever, like the TV's voice screen
+    limits: { system_voice_test: 50 },
+  });
+  await session.say('start');
+  const result = calls[1].messages[2].content[0];
+  assert.equal(result.tool_use_id, 't1');
+  assert.ok(String(result.content).includes('timedOut'));
+});
+
+test('Stop ends a check that is still waiting', async () => {
+  const { steps, ui } = recorder();
+  let session!: InstanceType<typeof DiagnosisSession>;
+  session = new DiagnosisSession({ apiKey: 'x' }, ui, {
+    send: async () => ({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'run_command', input: { command: 'getprop' } }] }) as any,
+    runTool: () => new Promise(() => {}),
+    limits: { run_command: 0 },
+  });
+  const run = session.say('start');
+  await new Promise((r) => setTimeout(r, 20));
+  session.stop();
+  await run;
+  assert.equal(steps[steps.length - 1].kind, 'error');
+});
