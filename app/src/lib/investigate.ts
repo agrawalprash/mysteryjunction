@@ -18,10 +18,13 @@ const Diag = registerPlugin<{
   getSetting(o: { table: string; key: string }): Promise<Json>;
   httpCheck(o: { url: string }): Promise<Json>;
   audioProbe(o: { seconds?: number; source?: number; deviceId?: number }): Promise<Json>;
+  speakAloud(o: { text: string; language: string }): Promise<Json>;
+  systemVoiceTest(o: { language: string; speakText: string; delayMs: number }): Promise<Json>;
 }>('WanderDiagnostics');
 
 export type Step =
   | { kind: 'thought'; text: string }
+  | { kind: 'user'; text: string; queued?: boolean }
   | { kind: 'tool'; name: string; input: Json; output?: string; error?: boolean }
   | { kind: 'prompt'; text: string }
   | { kind: 'final'; text: string }
@@ -45,7 +48,7 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'run_command',
     description:
-      'Run ONE read-only command (no shell operators). Allowed: getprop [key], dumpsys <service> [args] (often "Permission Denial" for an app; that is information too), pm list|path|dump ..., settings get|list <secure|global|system> [key], ls/cat under /proc /sys /system /vendor /product /odm, ping <host> (3 packets), ip addr|route|link, uname -a, id, df, uptime, date, logcat (only this app\'s own log). Output is truncated to ~7 KB, so filter with arguments where possible.',
+      'Run ONE read-only command (no shell operators or pipes). Allowed: getprop [key], dumpsys <service> [args] (often "Permission Denial" for an app; that is information too), pm list|path|dump ..., settings get|list <secure|global|system> [key], service list|check, wm size|density, ps [-A], top (one snapshot), ls/cat/grep/head/tail/find/stat on paths under /proc /sys /system /vendor /product /odm, ping <host> (3 packets), ip addr|route|link, uname -a, id, df, uptime, date, which, logcat (only this app\'s own log). Output is truncated to ~7 KB, so filter with arguments (e.g. grep -i voice <file>).',
     input_schema: { type: 'object', properties: { command: str }, required: ['command'], additionalProperties: false },
     strict: true,
   },
@@ -101,6 +104,24 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
     strict: true,
   },
   {
+    name: 'speak_aloud',
+    description: 'Make the device say a phrase out loud through its speakers with the system text-to-speech engine. Reports the TTS engine, whether that language is supported/installed (LANG_MISSING_DATA / LANG_NOT_SUPPORTED), and whether it spoke. Useful on its own (Google speech/TTS health) and as a known voice source.',
+    input_schema: { type: 'object', properties: { text: str, language: str }, required: ['text', 'language'], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: 'system_voice_test',
+    description:
+      'Open the system\'s own voice-input screen (android.speech.action.RECOGNIZE_SPEECH, the same path YouTube uses) in a language, and optionally have the device speak a known phrase after delay_ms so the owner doesn\'t have to talk. Returns the result code (OK / CANCELED / NO_MATCH / CLIENT / SERVER / NETWORK / AUDIO error) and recognised text. Whether the remote\'s mic hears the TV speaker without the mic button held is itself something to find out; if needed, ask the owner to hold the button (only hold, not speak).',
+    input_schema: {
+      type: 'object',
+      properties: { language: str, speak_text: str, delay_ms: { type: 'integer' } },
+      required: ['language', 'speak_text', 'delay_ms'],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
     name: 'ask_user',
     description: 'Ask the viewer to do or check something only they can (press a button, open a menu, read a value on screen) and wait for their answer. Keep it to one clear action. Offer short answer options.',
     input_schema: {
@@ -125,82 +146,173 @@ const SYSTEM = `You are investigating a problem on the owner's Android device (u
   Ruled out,
   What to do next (numbered, exact menu paths for this device; say which step tests what),
   What I couldn't check from inside an app.
+- Prefer tests that don't need the owner: speak_aloud and system_voice_test can produce a known phrase in any language through the TV's speakers.
+- The owner can send you messages at any time; they arrive as "Message from the owner". Take them into account immediately. After your answer the conversation continues, so keep context and follow up on what they ask.
+- Format: plain text, short paragraphs and simple lists; no tables or Markdown headings syntax (headings as plain lines ending with a colon are fine).
 Background: on Android TV the remote's mic streams over Bluetooth only while the Assistant button is held, to the system's voice service (often com.google.android.katniss); the Google TV phone app sends voice to the same service. If both fail, the shared parts are that service, its account/language settings, and the network path to Google.`;
 
 const MAX_STEPS = 24;
 
-export interface InvestigationDeps {
-  create: (params: Anthropic.Beta.MessageCreateParamsNonStreaming) => Promise<Anthropic.Beta.BetaMessage>;
+export interface SessionDeps {
+  /** Sends one request, streaming text to onText(snapshotOfCurrentTextBlock). */
+  send: (params: Anthropic.Beta.MessageCreateParams, onText: (snapshot: string) => void, signal: { abort?: () => void }) => Promise<Anthropic.Beta.BetaMessage>;
   runTool: typeof runTool;
 }
 
-export async function investigate(
-  auth: ClaudeAuth,
-  symptoms: string,
-  ui: InvestigationUi,
-  isCancelled: () => boolean,
-  deps?: Partial<InvestigationDeps>,
-): Promise<string> {
-  const create = deps?.create ?? ((p) => client(auth).beta.messages.create(p));
-  const run = deps?.runTool ?? runTool;
-  const messages: Anthropic.Beta.BetaMessageParam[] = [
-    {
-      role: 'user',
-      content: `The owner says:\n${symptoms}\n\n(Wander ${__APP_VERSION__}; screen ${window.innerWidth}×${window.innerHeight} @${window.devicePixelRatio}x CSS px.)`,
-    },
-  ];
-  for (let turn = 0; turn < MAX_STEPS + 2; turn++) {
-    if (isCancelled()) throw new Error('Stopped.');
-    const res = await create({
-      model: MODEL,
-      max_tokens: 16000,
-      ...FALLBACK,
-      output_config: { effort: 'high' },
-      cache_control: { type: 'ephemeral' },
-      system: SYSTEM,
-      tools: TOOLS,
-      // Out of steps: no more tools, write the answer.
-      ...(turn >= MAX_STEPS ? { tool_choice: { type: 'none' as const } } : {}),
-      messages,
-    });
-    // Keep the assistant turn exactly as returned (thinking blocks included).
-    messages.push({ role: 'assistant', content: res.content as Anthropic.Beta.BetaContentBlockParam[] });
-    for (const b of res.content) if (b.type === 'text' && b.text.trim() && res.stop_reason === 'tool_use') ui.step({ kind: 'thought', text: b.text.trim() });
+/**
+ * A Claude Code–style diagnosis session: Claude streams its reasoning, runs tools,
+ * and the owner can send messages at any time (queued into the next step while
+ * Claude works; a new turn when it's idle). The conversation continues after an answer.
+ */
+export class DiagnosisSession {
+  private messages: Anthropic.Beta.BetaMessageParam[] = [];
+  private notes: string[] = [];
+  private running = false;
+  private cancelled = false;
+  private abortHandle: { abort?: () => void } = {};
+  private deps: SessionDeps;
+  private ui: InvestigationUi;
 
-    if (res.stop_reason === 'refusal') throw new Error('Claude declined to continue this investigation.');
-    if (res.stop_reason !== 'tool_use') {
-      const text = res.content
-        .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
-        .map((b) => b.text)
-        .join('\n')
-        .trim();
-      ui.step({ kind: 'final', text: text || '(Claude finished without a written answer.)' });
-      return text;
-    }
-
-    const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
-    for (const b of res.content) {
-      if (b.type !== 'tool_use') continue;
-      if (isCancelled()) throw new Error('Stopped.');
-      const input = (b.input ?? {}) as Json;
-      const idx = ui.step({ kind: 'tool', name: b.name, input });
-      let output: string;
-      let isError = false;
-      try {
-        output = JSON.stringify(await run(b.name, input, ui), null, 1);
-      } catch (e) {
-        output = `Tool failed: ${e instanceof Error ? e.message : String(e)}`;
-        isError = true;
-      }
-      ui.step({ kind: 'tool', name: b.name, input, output, error: isError }, idx);
-      results.push({ type: 'tool_result', tool_use_id: b.id, content: output.slice(0, 12000), is_error: isError });
-    }
-    // All results for this turn go back in one message.
-    const content: Anthropic.Beta.BetaContentBlockParam[] = [...results];
-    if (turn === MAX_STEPS - 1) content.push({ type: 'text', text: 'That was the last check. Write your final answer now.' });
-    messages.push({ role: 'user', content });
+  constructor(auth: ClaudeAuth, ui: InvestigationUi, deps?: Partial<SessionDeps>) {
+    this.ui = ui;
+    this.deps = {
+      runTool,
+      send: async (params, onText, signal) => {
+        const stream = client(auth).beta.messages.stream(params as Anthropic.Beta.MessageCreateParamsNonStreaming);
+        signal.abort = () => stream.abort();
+        stream.on('text', (_delta, snapshot) => onText(snapshot));
+        return stream.finalMessage();
+      },
+      ...deps,
+    };
   }
-  throw new Error('The investigation ran too long without an answer.');
+
+  get busy() {
+    return this.running;
+  }
+
+  /** The owner says something. While Claude works it's passed in at the next step. */
+  async say(text: string): Promise<void> {
+    const t = text.trim();
+    if (!t) return;
+    if (this.running) {
+      this.notes.push(t);
+      this.ui.step({ kind: 'user', text: t, queued: true });
+      return;
+    }
+    this.ui.step({ kind: 'user', text: t });
+    this.appendUser([{ type: 'text', text: t }]);
+    await this.loop();
+  }
+
+  stop() {
+    this.cancelled = true;
+    this.abortHandle.abort?.();
+  }
+
+  /** Adds content to the conversation as the owner, closing any tool calls a Stop left open. */
+  private appendUser(content: Anthropic.Beta.BetaContentBlockParam[]) {
+    const last = this.messages[this.messages.length - 1];
+    const open =
+      last?.role === 'assistant' && Array.isArray(last.content)
+        ? (last.content as Anthropic.Beta.BetaContentBlockParam[]).filter((b) => b.type === 'tool_use').map((b) => (b as { id: string }).id)
+        : [];
+    const closing: Anthropic.Beta.BetaContentBlockParam[] = open.map((id) => ({ type: 'tool_result', tool_use_id: id, content: 'Stopped by the owner.', is_error: true }));
+    if (last?.role === 'user' && Array.isArray(last.content)) {
+      last.content = [...(last.content as Anthropic.Beta.BetaContentBlockParam[]), ...content];
+    } else {
+      this.messages.push({ role: 'user', content: [...closing, ...content] });
+    }
+  }
+
+  private async loop() {
+    this.running = true;
+    this.cancelled = false;
+    try {
+      for (let turn = 0; turn <= MAX_STEPS; turn++) {
+        let textStep = -1;
+        let lastLen = 0;
+        const onText = (snapshot: string) => {
+          // A new text block starts with a shorter snapshot.
+          if (textStep === -1 || snapshot.length < lastLen) textStep = this.ui.step({ kind: 'thought', text: snapshot });
+          else this.ui.step({ kind: 'thought', text: snapshot }, textStep);
+          lastLen = snapshot.length;
+        };
+        this.abortHandle = {};
+        const res = await this.deps.send(
+          {
+            model: MODEL,
+            max_tokens: 16000,
+            ...FALLBACK,
+            output_config: { effort: 'high' },
+            cache_control: { type: 'ephemeral' },
+            system: SYSTEM,
+            tools: TOOLS,
+            ...(turn >= MAX_STEPS ? { tool_choice: { type: 'none' as const } } : {}),
+            messages: this.messages,
+          },
+          onText,
+          this.abortHandle,
+        );
+        // Keep the assistant turn exactly as returned (thinking blocks included).
+        this.messages.push({ role: 'assistant', content: res.content as Anthropic.Beta.BetaContentBlockParam[] });
+        if (res.stop_reason === 'refusal') throw new Error('Claude declined to continue.');
+        if (res.stop_reason !== 'tool_use') {
+          if (textStep >= 0) {
+            const text = res.content
+              .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
+              .map((b) => b.text)
+              .join('\n')
+              .trim();
+            this.ui.step({ kind: 'final', text }, textStep);
+          }
+          return;
+        }
+        const results: Anthropic.Beta.BetaContentBlockParam[] = [];
+        for (const b of res.content) {
+          if (b.type !== 'tool_use') continue;
+          if (this.cancelled) throw new Error('Stopped.');
+          const input = (b.input ?? {}) as Json;
+          const idx = this.ui.step({ kind: 'tool', name: b.name, input });
+          let output: string;
+          let isError = false;
+          try {
+            output = JSON.stringify(await this.deps.runTool(b.name, input, this.ui), null, 1);
+          } catch (e) {
+            output = `Tool failed: ${e instanceof Error ? e.message : String(e)}`;
+            isError = true;
+          }
+          this.ui.step({ kind: 'tool', name: b.name, input, output, error: isError }, idx);
+          results.push({ type: 'tool_result', tool_use_id: b.id, content: output.slice(0, 12000), is_error: isError });
+        }
+        // Everything for this step goes back in one message: all tool results, then any notes from the owner.
+        for (const n of this.notes.splice(0)) results.push({ type: 'text', text: `Message from the owner (sent while you were working): ${n}` });
+        if (turn === MAX_STEPS - 1) results.push({ type: 'text', text: 'That was the last check for now. Write your answer.' });
+        this.messages.push({ role: 'user', content: results });
+        if (this.cancelled) throw new Error('Stopped.');
+      }
+    } catch (e) {
+      const stopped = this.cancelled || (e instanceof Error && /abort/i.test(e.name + e.message));
+      this.ui.step({ kind: 'error', text: stopped ? 'Stopped. Say what to do next, or ask Claude to carry on.' : e instanceof Error ? e.message : String(e) });
+    } finally {
+      this.running = false;
+      // Notes that arrived after the last step become the next turn.
+      const left = this.notes.splice(0);
+      if (left.length && !this.cancelled) {
+        this.appendUser([{ type: 'text', text: left.join('\n') }]);
+        void this.loop();
+      }
+    }
+  }
+}
+
+/** Starts a session with the owner's description of the problem. */
+export function startDiagnosis(auth: ClaudeAuth, symptoms: string, ui: InvestigationUi, deps?: Partial<SessionDeps>) {
+  const session = new DiagnosisSession(auth, ui, deps);
+  void session.say(
+    `${symptoms}\n\n(Wander ${__APP_VERSION__}; screen ${window.innerWidth}×${window.innerHeight} @${window.devicePixelRatio}x CSS px.)`,
+  );
+  return session;
 }
 
 async function runTool(name: string, input: Json, ui: InvestigationUi): Promise<unknown> {
@@ -232,6 +344,14 @@ async function runTool(name: string, input: Json, ui: InvestigationUi): Promise<
         ...(deviceId > 0 ? { deviceId } : {}),
       });
     }
+    case 'speak_aloud':
+      return Diag.speakAloud({ text: String(input.text ?? ''), language: String(input.language ?? 'en-US') });
+    case 'system_voice_test':
+      return Diag.systemVoiceTest({
+        language: String(input.language ?? 'en-US'),
+        speakText: String(input.speak_text ?? ''),
+        delayMs: Number(input.delay_ms) || 1500,
+      });
     case 'ask_user': {
       const answer = await ui.ask(String(input.question ?? ''), (input.options as string[]) ?? []);
       return { answer };

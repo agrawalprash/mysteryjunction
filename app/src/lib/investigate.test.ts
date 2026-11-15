@@ -1,64 +1,121 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Step } from './investigate.ts';
+
 (globalThis as Record<string, unknown>).__APP_VERSION__ = 'test';
 (globalThis as Record<string, unknown>).window = { innerWidth: 960, innerHeight: 540, devicePixelRatio: 2 };
-const { investigate } = await import('./investigate.ts');
+const { DiagnosisSession } = await import('./investigate.ts');
 
-test('investigation loops through tool calls, passes results back together, and ends with the final answer', async () => {
+function recorder() {
+  const steps: Step[] = [];
+  return {
+    steps,
+    ui: {
+      step: (s: Step, i?: number) => {
+        if (i === undefined) {
+          steps.push(s);
+          return steps.length - 1;
+        }
+        steps[i] = s;
+        return i;
+      },
+      ask: async () => 'Done',
+    },
+  };
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+test('session streams text, runs tools, sends results together, and the conversation continues', async () => {
   const calls: any[] = [];
   const script: any[] = [
-    { stop_reason: 'tool_use', content: [
-      { type: 'thinking', thinking: '', signature: 'sig' },
-      { type: 'text', text: 'Checking the default assistant and the speech service.' },
-      { type: 'tool_use', id: 't1', name: 'get_setting', input: { table: 'secure', key: 'assistant' } },
-      { type: 'tool_use', id: 't2', name: 'run_command', input: { command: 'getprop ro.build.version.release' } },
-    ] },
-    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't3', name: 'ask_user', input: { question: 'Hold the mic button?', options: ['Done'] } }] },
-    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'What I found: …' }] },
-  ];
-  const steps: any[] = [];
-  const answer = await investigate(
-    { apiKey: 'x' },
-    'voice broken',
-    { step: (s, i) => { if (i === undefined) { steps.push(s); return steps.length - 1; } steps[i] = s; return i; }, ask: async () => 'Done' },
-    () => false,
     {
-      create: async (p) => { calls.push(structuredClone(p)); return script.shift(); },
-      runTool: async (name, input, ui) => (name === 'ask_user' ? { answer: await ui.ask(String(input.question), []) } : { ran: name, input }),
+      stop_reason: 'tool_use',
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        { type: 'text', text: 'Checking the default assistant.' },
+        { type: 'tool_use', id: 't1', name: 'get_setting', input: { table: 'secure', key: 'assistant' } },
+        { type: 'tool_use', id: 't2', name: 'run_command', input: { command: 'getprop ro.build.version.release' } },
+      ],
     },
-  );
-  assert.equal(answer, 'What I found: …');
-  assert.equal(calls.length, 3);
-  // Second request: assistant turn kept as-is (thinking block included), then both tool results in ONE user message.
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'What I found: …' }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Sure, here is more.' }] },
+  ];
+  const { steps, ui } = recorder();
+  const session = new DiagnosisSession({ apiKey: 'x' }, ui, {
+    send: async (p: any, onText: (s: string) => void) => {
+      calls.push(structuredClone(p));
+      const next = script.shift();
+      for (const b of next.content) if (b.type === 'text') onText(b.text);
+      return next;
+    },
+    runTool: async (name: string, input: any) => ({ ran: name, input }),
+  });
+  await session.say('voice is broken');
+  // Second request: assistant turn kept as returned, then both tool results in one user message.
   const second = calls[1].messages;
-  assert.equal(second[1].role, 'assistant');
   assert.equal(second[1].content[0].type, 'thinking');
-  assert.equal(second[2].role, 'user');
   assert.deepEqual(second[2].content.map((c: any) => c.tool_use_id), ['t1', 't2']);
-  assert.ok(calls.every((c) => c.tools.length > 0 && c.cache_control?.type === 'ephemeral'));
-  // Steps shown on screen: thought, two tools (with outputs), one tool, final.
-  assert.deepEqual(steps.map((s) => s.kind), ['thought', 'tool', 'tool', 'tool', 'final']);
-  assert.ok(steps[1].output.includes('get_setting'));
+  assert.deepEqual(steps.map((s) => s.kind), ['user', 'thought', 'tool', 'tool', 'final']);
+  // Follow-up after the answer continues the same conversation.
+  await session.say('tell me more');
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].messages.length, 5);
+  assert.equal(steps[steps.length - 1].kind, 'final');
 });
 
-test('stops asking for tools at the step limit', async () => {
-  let n = 0;
-  const seen: any[] = [];
-  const answer = await investigate(
-    { apiKey: 'x' },
-    'x',
-    { step: () => 0, ask: async () => '' },
-    () => false,
-    {
-      create: async (p) => {
-        seen.push(p);
-        n++;
-        if (p.tool_choice?.type === 'none') return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'final' }] } as any;
-        return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: `t${n}`, name: 'device_report', input: {} }] } as any;
-      },
-      runTool: async () => ({ ok: true }),
+test('a message sent while Claude works is passed in with the next tool results', async () => {
+  const calls: any[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const script: any[] = [
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'device_report', input: {} }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] },
+  ];
+  const { steps, ui } = recorder();
+  const session = new DiagnosisSession({ apiKey: 'x' }, ui, {
+    send: async (p: any) => {
+      calls.push(structuredClone(p));
+      return script.shift();
     },
-  );
-  assert.equal(answer, 'final');
-  assert.equal(seen.filter((p) => p.tool_choice?.type === 'none').length, 1);
+    runTool: async () => {
+      await gate;
+      return { ok: true };
+    },
+  });
+  const run = session.say('start');
+  await new Promise((r) => setTimeout(r, 10));
+  await session.say('also try German');
+  release();
+  await run;
+  const lastUser = calls[1].messages[2].content;
+  assert.equal(lastUser[0].type, 'tool_result');
+  assert.ok(lastUser[1].text.includes('also try German'));
+  assert.ok(steps.some((s) => s.kind === 'user' && s.queued));
+});
+
+test('after Stop, open tool calls are closed so the conversation can continue', async () => {
+  const calls: any[] = [];
+  const { ui } = recorder();
+  let session!: InstanceType<typeof DiagnosisSession>;
+  const script: any[] = [
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'device_report', input: {} }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] },
+  ];
+  session = new DiagnosisSession({ apiKey: 'x' }, ui, {
+    send: async (p: any) => {
+      calls.push(structuredClone(p));
+      return script.shift();
+    },
+    runTool: async () => {
+      session.stop();
+      return { ok: true };
+    },
+  });
+  await session.say('start');
+  await session.say('carry on');
+  const msgs = calls[1].messages;
+  const last = msgs[msgs.length - 1];
+  assert.equal(last.role, 'user');
+  assert.ok(last.content.some((c: any) => c.type === 'tool_result' && c.tool_use_id === 't1'));
+  assert.ok(last.content.some((c: any) => c.type === 'text' && c.text === 'carry on'));
 });

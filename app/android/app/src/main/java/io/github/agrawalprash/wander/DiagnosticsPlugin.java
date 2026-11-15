@@ -375,7 +375,8 @@ public class DiagnosticsPlugin extends Plugin {
     // ------------------------------------------------------------ tools for Claude's investigation
 
     private static final java.util.Set<String> ALLOWED_BINARIES = new java.util.HashSet<>(java.util.Arrays.asList(
-        "getprop", "dumpsys", "pm", "settings", "ls", "cat", "ping", "uname", "id", "df", "uptime", "date", "ip", "logcat"));
+        "getprop", "dumpsys", "pm", "settings", "ls", "cat", "ping", "uname", "id", "df", "uptime", "date", "ip", "logcat",
+        "ps", "top", "service", "wm", "grep", "head", "tail", "find", "stat", "which"));
 
     /** Runs one read-only command from an allowlist (no shell, no pipes, no writes). */
     @PluginMethod
@@ -399,6 +400,7 @@ public class DiagnosticsPlugin extends Plugin {
                     args = withCount;
                 }
                 if (args[0].equals("logcat")) args = new String[] { "logcat", "-d", "-t", "300" };
+                if (args[0].equals("top")) args = new String[] { "top", "-b", "-n", "1", "-m", "25" };
                 Process p = new ProcessBuilder(args).redirectErrorStream(false).start();
                 StringBuilder out = new StringBuilder();
                 StringBuilder err = new StringBuilder();
@@ -428,10 +430,14 @@ public class DiagnosticsPlugin extends Plugin {
         if (bin.equals("settings") && (args.length < 2 || !(args[1].equals("get") || args[1].equals("list")))) return "settings: only get/list";
         if (bin.equals("pm") && (args.length < 2 || !(args[1].equals("list") || args[1].equals("path") || args[1].equals("dump")))) return "pm: only list/path/dump";
         if (bin.equals("ip") && (args.length < 2 || !(args[1].equals("addr") || args[1].equals("route") || args[1].equals("link")))) return "ip: only addr/route/link";
-        if ((bin.equals("cat") || bin.equals("ls")) && args.length > 1) {
+        if (bin.equals("service") && (args.length < 2 || !(args[1].equals("list") || args[1].equals("check")))) return "service: only list/check";
+        if (bin.equals("wm") && (args.length < 2 || !(args[1].equals("size") || args[1].equals("density")) || args.length > 2)) return "wm: only size/density (read)";
+        if (bin.equals("find") && command.contains("-delete")) return "find: no -delete";
+        if (bin.equals("find") && command.contains("-exec")) return "find: no -exec";
+        if ((bin.equals("cat") || bin.equals("ls") || bin.equals("grep") || bin.equals("head") || bin.equals("tail") || bin.equals("find") || bin.equals("stat")) && args.length > 1) {
             String path = args[args.length - 1];
             if (!(path.startsWith("/proc") || path.startsWith("/sys") || path.startsWith("/system") || path.startsWith("/vendor") || path.startsWith("/product") || path.startsWith("/odm")))
-                return "cat/ls: only /proc, /sys, /system, /vendor, /product, /odm";
+                return "file commands: only paths under /proc, /sys, /system, /vendor, /product, /odm";
         }
         return null;
     }
@@ -639,5 +645,104 @@ public class DiagnosticsPlugin extends Plugin {
             }
             call.resolve(r);
         }).start();
+    }
+
+    // ------------------------------------------------------------ synthetic voice (no need for the owner to speak)
+
+    private interface TtsDone { void done(JSObject result); }
+
+    /** Speaks text through the device's speakers with the system text-to-speech engine. */
+    private void speak(String text, String language, TtsDone onDone) {
+        final boolean[] finished = { false };
+        final android.speech.tts.TextToSpeech[] tts = new android.speech.tts.TextToSpeech[1];
+        final JSObject r = new JSObject();
+        final long started = System.currentTimeMillis();
+        Runnable finish = () -> {
+            if (finished[0]) return;
+            finished[0] = true;
+            r.put("ms", System.currentTimeMillis() - started);
+            try { tts[0].shutdown(); } catch (Exception ignored) { }
+            onDone.done(r);
+        };
+        tts[0] = new android.speech.tts.TextToSpeech(getContext(), status -> {
+            r.put("initStatus", status == android.speech.tts.TextToSpeech.SUCCESS ? "SUCCESS" : "ERROR " + status);
+            if (status != android.speech.tts.TextToSpeech.SUCCESS) { finish.run(); return; }
+            r.put("engine", tts[0].getDefaultEngine());
+            int lang = tts[0].setLanguage(Locale.forLanguageTag(language));
+            r.put("languageResult", lang == android.speech.tts.TextToSpeech.LANG_MISSING_DATA ? "LANG_MISSING_DATA"
+                : lang == android.speech.tts.TextToSpeech.LANG_NOT_SUPPORTED ? "LANG_NOT_SUPPORTED" : "OK (" + lang + ")");
+            tts[0].setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                @Override public void onStart(String id) { r.put("started", true); }
+                @Override public void onDone(String id) { r.put("spoken", true); finish.run(); }
+                @Override public void onError(String id) { r.put("spoken", false); r.put("error", "utterance error"); finish.run(); }
+                @Override public void onError(String id, int code) { r.put("spoken", false); r.put("error", "utterance error " + code); finish.run(); }
+            });
+            int q = tts[0].speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "wander-test");
+            if (q != android.speech.tts.TextToSpeech.SUCCESS) { r.put("error", "speak() returned " + q); finish.run(); }
+        });
+        new Handler(Looper.getMainLooper()).postDelayed(() -> { r.put("timeout", true); finish.run(); }, 20000);
+    }
+
+    @PluginMethod
+    public void speakAloud(PluginCall call) {
+        String text = call.getString("text", "This is a Wander speech test.");
+        String language = call.getString("language", "en-US");
+        new Handler(Looper.getMainLooper()).post(() -> speak(text, language, call::resolve));
+    }
+
+    /**
+     * Opens the system's own voice-input screen (the same path YouTube uses) and, optionally,
+     * speaks a known phrase through the TV after a short delay so nobody has to talk.
+     */
+    @PluginMethod
+    public void systemVoiceTest(PluginCall call) {
+        String language = call.getString("language", "en-US");
+        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
+        i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Wander voice test: listening…");
+        if (i.resolveActivity(getContext().getPackageManager()) == null) {
+            JSObject r = new JSObject();
+            r.put("error", "No app handles android.speech.action.RECOGNIZE_SPEECH");
+            call.resolve(r);
+            return;
+        }
+        String speakText = call.getString("speakText", "");
+        int delay = call.getInt("delayMs", 1500);
+        if (speakText != null && !speakText.isEmpty()) {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> speak(speakText, language, res -> { }), delay);
+        }
+        startActivityForResult(call, i, "onSystemVoiceResult");
+    }
+
+    @com.getcapacitor.annotation.ActivityCallback
+    private void onSystemVoiceResult(PluginCall call, androidx.activity.result.ActivityResult result) {
+        if (call == null) return;
+        JSObject r = new JSObject();
+        int code = result.getResultCode();
+        String name;
+        switch (code) {
+            case -1: name = "RESULT_OK"; break;
+            case 0: name = "RESULT_CANCELED (closed, timed out, or heard nothing)"; break;
+            case 1: name = "RESULT_NO_MATCH"; break;
+            case 2: name = "RESULT_CLIENT_ERROR"; break;
+            case 3: name = "RESULT_SERVER_ERROR"; break;
+            case 4: name = "RESULT_NETWORK_ERROR"; break;
+            case 5: name = "RESULT_AUDIO_ERROR"; break;
+            default: name = "RESULT_" + code;
+        }
+        r.put("resultCode", code);
+        r.put("result", name);
+        if (result.getData() != null) {
+            ArrayList<String> m = result.getData().getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+            r.put("text", m != null && !m.isEmpty() ? m.get(0) : "");
+            Bundle extras = result.getData().getExtras();
+            if (extras != null) {
+                JSArray keys = new JSArray();
+                for (String k : extras.keySet()) keys.put(k);
+                r.put("extraKeys", keys);
+            }
+        }
+        call.resolve(r);
     }
 }
