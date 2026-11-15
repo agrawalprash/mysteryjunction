@@ -130,7 +130,7 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
         </div>
         <div className="topbar-actions">
           {keys.anthropic && (
-            <button className="ask-btn" onClick={() => openAsk(tv)}>
+            <button className="ask-btn" onClick={() => openAsk(false)}>
               ✦ Ask
             </button>
           )}
@@ -210,7 +210,7 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
                 <p className="muted small">No new sets left today (YouTube’s daily limit).</p>
               )}
               {keys.anthropic && (
-                <button className="btn btn-ghost" disabled={busy} onClick={() => openAsk(tv)}>
+                <button className="btn btn-ghost" disabled={busy} onClick={() => openAsk(false)}>
                   ✦ Ask Wander
                 </button>
               )}

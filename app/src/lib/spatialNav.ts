@@ -66,11 +66,9 @@ function move(dir: Dir): boolean {
     return false;
   }
   best.focus({ preventScroll: true });
-  best.scrollIntoView({
-    behavior: 'smooth',
-    block: dir === 'ArrowUp' || dir === 'ArrowDown' ? 'center' : 'nearest',
-    inline: 'center',
-  });
+  // Move the page only as far as needed to keep the new item in view (CSS scroll-margin
+  // keeps a comfortable gap), instead of re-centring on every press.
+  best.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
   return true;
 }
 
