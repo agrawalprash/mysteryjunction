@@ -7,13 +7,16 @@ export function UpdateBanner({ force = false, showLatest = false }: { force?: bo
   const [checked, setChecked] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
-    checkForUpdate(force)
+    setChecked(false);
+    setError('');
+    checkForUpdate(force || nonce > 0)
       .then(setInfo)
       .catch((e) => force && setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setChecked(true));
-  }, [force]);
+  }, [force, nonce]);
 
   const go = async () => {
     if (!info) return;
@@ -33,8 +36,15 @@ export function UpdateBanner({ force = false, showLatest = false }: { force?: bo
   };
 
   if (!info) {
-    if (showLatest && checked) return <p className="muted small">{error || 'You have the latest version.'}</p>;
-    return null;
+    if (!showLatest) return null;
+    return (
+      <div className="end-actions left">
+        <p className="muted small">{!checked ? 'Checking…' : error || 'You have the latest version.'}</p>
+        <button className="btn btn-ghost" disabled={!checked} onClick={() => setNonce((n) => n + 1)}>
+          Check again
+        </button>
+      </div>
+    );
   }
   return (
     <div className="update-banner">

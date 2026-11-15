@@ -289,3 +289,9 @@ body.tv .reply { font-size: 26px; }
 body.tv .heard, body.tv .changes, body.tv .busy-strip, body.tv .ask-progress { font-size: 20px; }
 body.tv .busy-strip, body.tv .update-banner { margin-left: 0; margin-right: 0; }
 body.tv .sheet .small, body.tv .panel .small { font-size: 18px; }
+
+/* Calmer remote navigation: no snapping, gentle focus growth, room around the focused card. */
+body.tv .row-scroll { scroll-snap-type: none; }
+body.tv .card { scroll-margin: 150px 60px 70px 60px; }
+body.tv .card:focus { transform: scale(1.03); }
+body.tv .chip, body.tv .btn { scroll-margin: 120px 60px 70px 60px; }
