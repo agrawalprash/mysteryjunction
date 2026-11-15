@@ -312,14 +312,14 @@ export class DiagnosisSession {
         this.messages.push({ role: 'assistant', content: res.content as Anthropic.Beta.BetaContentBlockParam[] });
         if (res.stop_reason === 'refusal') throw new Error('Claude declined to continue.');
         if (res.stop_reason !== 'tool_use') {
-          if (textStep >= 0) {
-            const text = res.content
-              .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
-              .map((b) => b.text)
-              .join('\n')
-              .trim();
-            this.ui.step({ kind: 'final', text }, textStep);
-          }
+          const text = res.content
+            .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
+            .map((b) => b.text)
+            .join('\n')
+            .trim();
+          // Always show the answer, whether or not it was streamed in.
+          if (textStep >= 0) this.ui.step({ kind: 'final', text }, textStep);
+          else if (text) this.ui.step({ kind: 'final', text });
           return;
         }
         const results: Anthropic.Beta.BetaContentBlockParam[] = [];
@@ -361,12 +361,9 @@ export class DiagnosisSession {
 }
 
 /** Starts a session with the owner's description of the problem. */
-export function startDiagnosis(auth: ClaudeAuth, symptoms: string, ui: InvestigationUi, deps?: Partial<SessionDeps>) {
-  const session = new DiagnosisSession(auth, ui, deps);
-  void session.say(
-    `${symptoms}\n\n(Wander ${__APP_VERSION__}; screen ${window.innerWidth}×${window.innerHeight} @${window.devicePixelRatio}x CSS px.)`,
-  );
-  return session;
+/** The first message: the owner's description plus a few facts about this screen. */
+export function diagnosisIntro(symptoms: string) {
+  return `${symptoms}\n\n(Wander ${__APP_VERSION__}; screen ${window.innerWidth}×${window.innerHeight} @${window.devicePixelRatio}x CSS px.)`;
 }
 
 async function runTool(name: string, input: Json, ui: InvestigationUi): Promise<unknown> {

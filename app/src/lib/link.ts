@@ -20,7 +20,8 @@ export type LinkMessage =
   | { type: 'keys'; youtube: string; anthropic: string; anthropicWorkspace: string; github?: string }
   | { type: 'sync'; told: unknown }
   | { type: 'newSet' }
-  | { type: 'search'; q: string };
+  | { type: 'search'; q: string }
+  | { type: 'diag'; action: 'state' | 'start' | 'say' | 'stop'; text?: string };
 
 // ---------------------------------------------------------------- TV side
 

@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { claudeAuth, type ApiKeys } from '../lib/keys.ts';
 import { DEFAULT_SYMPTOMS } from '../lib/diagnostics.ts';
-import { startDiagnosis, type DiagnosisSession, type Step } from '../lib/investigate.ts';
+import { diagSnapshot, sayDiag, startDiag, stopDiag, subscribeDiag, type DiagSnapshot } from '../lib/diagStore.ts';
+import { linkedTv, sendToTv } from '../lib/link.ts';
 import { listen } from '../lib/voice.ts';
 import { useTv } from './App.tsx';
 
@@ -38,86 +39,93 @@ function firstLines(text: string, n = 3) {
   return lines.slice(0, n).join('\n') + (lines.length > n ? `\n… +${lines.length - n} lines` : '');
 }
 
-interface Pending {
-  question: string;
-  options: string[];
-  resolve: (answer: string) => void;
+type Target = 'here' | 'tv';
+
+const EMPTY: DiagSnapshot = { active: false, busy: false, steps: [], pending: null };
+
+/** Session state for this device (shared store) or for the linked TV (polled over Wi-Fi). */
+function useDiag(target: Target) {
+  const [snap, setSnap] = useState<DiagSnapshot>(target === 'here' ? diagSnapshot() : EMPTY);
+  const [linkError, setLinkError] = useState('');
+
+  useEffect(() => {
+    if (target === 'here') {
+      setSnap(diagSnapshot());
+      const off = subscribeDiag(() => setSnap(diagSnapshot()));
+      const t = window.setInterval(() => setSnap(diagSnapshot()), 1000);
+      return () => {
+        off();
+        clearInterval(t);
+      };
+    }
+    let alive = true;
+    const poll = async () => {
+      try {
+        const s = (await sendToTv({ type: 'diag', action: 'state' })) as DiagSnapshot;
+        if (alive) {
+          setSnap(s);
+          setLinkError('');
+        }
+      } catch (e) {
+        if (alive) setLinkError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    poll();
+    const t = window.setInterval(poll, 1500);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [target]);
+
+  const act = async (action: 'start' | 'say' | 'stop', text?: string) => {
+    if (target === 'here') return;
+    try {
+      setSnap((await sendToTv({ type: 'diag', action, text })) as DiagSnapshot);
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return { snap, linkError, act };
 }
 
-/** A Claude Code–style session that investigates this device with read-only tools. */
+/** A Claude Code–style session that investigates a device with read-only tools. */
 export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
   const tv = useTv();
+  const tvLink = !tv ? linkedTv() : null;
+  const [target, setTarget] = useState<Target>(tvLink ? 'tv' : 'here');
+  const { snap, linkError, act } = useDiag(target);
   const [symptoms, setSymptoms] = useState(DEFAULT_SYMPTOMS);
-  const [steps, setSteps] = useState<Step[]>([]);
-  const [pending, setPending] = useState<Pending | null>(null);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const session = useRef<DiagnosisSession | null>(null);
-  const log = useRef<Step[]>([]);
   const consoleRef = useRef<HTMLDivElement>(null);
+  const lastCount = useRef(0);
+  const { steps, pending, busy, active } = snap;
 
-  const sync = () => {
-    setSteps(log.current);
-    setBusy(!!session.current?.busy);
-  };
-  const follow = () => {
-    // Only follow along while the newest line is near the screen, so reading older output isn't interrupted.
+  // Follow new lines only while the newest one is near the screen, so reading older output isn't interrupted.
+  useEffect(() => {
+    if (steps.length === lastCount.current) return;
+    lastCount.current = steps.length;
     const el = consoleRef.current?.lastElementChild as HTMLElement | null;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    if (r.top < window.innerHeight * 1.2) window.setTimeout(() => el.scrollIntoView({ block: 'nearest' }), 30);
-  };
+    if (el && el.getBoundingClientRect().top < window.innerHeight * 1.2) el.scrollIntoView({ block: 'nearest' });
+  }, [steps.length]);
 
-  const ui = {
-    step: (s: Step, index?: number) => {
-      if (index === undefined) log.current = [...log.current, s];
-      else log.current = log.current.map((x, j) => (j === index ? s : x));
-      sync();
-      follow();
-      return index ?? log.current.length - 1;
-    },
-    ask: (question: string, options: string[]) =>
-      new Promise<string>((resolve) => {
-        setPending({ question, options, resolve });
-        window.setTimeout(() => document.querySelector<HTMLElement>('.diag-question button')?.focus(), 80);
-      }),
-  };
+  useEffect(() => {
+    if (pending) window.setTimeout(() => document.querySelector<HTMLElement>('.diag-question button')?.focus(), 80);
+  }, [pending?.question]);
 
   const start = () => {
+    if (target === 'tv') return act('start', symptoms);
     const auth = claudeAuth(keys);
-    if (!auth) return;
-    session.current?.stop();
-    log.current = [];
-    setSteps([]);
-    session.current = startDiagnosis(auth, symptoms, ui);
-    window.setTimeout(sync, 0);
-    // Keep the busy indicator honest while the session runs.
-    const t = window.setInterval(() => {
-      sync();
-      if (!session.current?.busy) clearInterval(t);
-    }, 500);
+    if (auth) startDiag(auth, symptoms);
   };
-
-  const answer = (a: string) => {
-    if (!pending || !a.trim()) return;
-    pending.resolve(a.trim());
-    ui.step({ kind: 'user', text: a.trim() });
-    setPending(null);
-  };
-
-  const send = async (text: string) => {
+  const send = (text: string) => {
     const t = text.trim();
     if (!t) return;
     setInput('');
-    if (pending) return answer(t);
-    if (!session.current) return;
-    const p = session.current.say(t);
-    sync();
-    const timer = window.setInterval(sync, 500);
-    await p;
-    clearInterval(timer);
-    sync();
+    if (target === 'tv') act('say', t);
+    else sayDiag(t);
   };
+  const stop = () => (target === 'tv' ? act('stop') : stopDiag());
 
   const speak = async () => {
     try {
@@ -128,38 +136,53 @@ export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
     }
   };
 
+  const canRunHere = Capacitor.isNativePlatform() && !!keys.anthropic;
+
   return (
     <section className="panel">
       <h3>Diagnose with Claude</h3>
       <p className="muted small">
-        A Claude Code–style session on this device: Claude runs read-only checks (shell commands, app permissions, voice settings, network tests,
-        test phrases spoken by the TV itself, a mic probe), thinks out loud, and keeps going until it has evidence. You can message it at any time.
-        Nothing on the device is changed. A run costs roughly 50 cents to $1.
+        A Claude Code–style session: Claude runs read-only checks on the device (shell commands, app permissions, voice settings, network tests,
+        test phrases spoken by the TV itself, a mic probe), thinks out loud, and keeps going until it has evidence. Message it at any time. Nothing
+        is changed. A run costs roughly 50 cents to $1.
       </p>
-      {!session.current && (
+      {tvLink && (
+        <div className="target-row">
+          <span className="muted small">Diagnose</span>
+          <button className={`chip${target === 'tv' ? ' chip-on' : ''}`} onClick={() => setTarget('tv')}>
+            📺 TV (type here)
+          </button>
+          <button className={`chip${target === 'here' ? ' chip-on' : ''}`} onClick={() => setTarget('here')}>
+            This phone
+          </button>
+        </div>
+      )}
+      {!active && (
         <>
           <label className="small muted">What’s wrong</label>
           <textarea value={symptoms} onChange={(e) => setSymptoms(e.target.value)} />
         </>
       )}
       <div className="end-actions left">
-        <button className="btn" onClick={start} disabled={!keys.anthropic || !Capacitor.isNativePlatform()}>
-          {session.current ? 'New session' : 'Start'}
+        <button className="btn" onClick={start} disabled={target === 'here' && !canRunHere}>
+          {active ? 'New session' : 'Start'}
         </button>
         {busy && (
-          <button className="btn btn-ghost" onClick={() => session.current?.stop()}>
+          <button className="btn btn-ghost" onClick={stop}>
             Stop
           </button>
         )}
       </div>
-      {!Capacitor.isNativePlatform() && <p className="muted small">Only works in the installed app.</p>}
+      {target === 'here' && !Capacitor.isNativePlatform() && <p className="muted small">Only works in the installed app.</p>}
+      {linkError && <p className="small error-text">{linkError}</p>}
+      {target === 'tv' && !active && !linkError && <p className="muted small">Wander needs to be open on the TV.</p>}
 
       {steps.length > 0 && (
         <div className="term" ref={consoleRef}>
           {steps.map((s, i) => {
             if (s.kind === 'user')
               return (
-                <div key={i} className="term-user" tabIndex={-1}>
+                <div key={i} className="term-user">
                   &gt; {s.text}
                   {s.queued && <span className="term-dim"> (queued for the next step)</span>}
                 </div>
@@ -195,7 +218,7 @@ export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
           </p>
           <div className="end-actions left">
             {pending.options.map((o) => (
-              <button key={o} className="btn btn-ghost" onClick={() => answer(o)}>
+              <button key={o} className="btn btn-ghost" onClick={() => send(o)}>
                 {o}
               </button>
             ))}
@@ -203,7 +226,7 @@ export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
         </div>
       )}
 
-      {session.current && (
+      {active && (
         <div className="ask-row term-input">
           {!tv && (
             <button className="btn btn-ghost" onClick={speak}>

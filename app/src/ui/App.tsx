@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import type { Candidate } from '../engine/types.ts';
-import { loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
+import { claudeAuth, loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
+import { diagSnapshot, sayDiag, startDiag, stopDiag } from '../lib/diagStore.ts';
 import { startLinkServer, type LinkMessage } from '../lib/link.ts';
 import { ask, getTold, mergeTold, newSet, search } from '../lib/wander.ts';
 import { onToast, toast } from '../lib/toast.ts';
@@ -76,6 +77,16 @@ export function App() {
           toast('📱 Your phone asked for a new set…');
           await newSet(k, '', () => undefined);
           return { ok: true };
+        case 'diag': {
+          if (msg.action === 'start') {
+            const auth = k ? claudeAuth(k) : null;
+            if (!auth) throw new Error('The TV has no Anthropic key yet. Send your keys first.');
+            startDiag(auth, msg.text ?? '');
+            toast('📱 Diagnosis started from your phone (Settings → Diagnose to watch).');
+          } else if (msg.action === 'say') sayDiag(msg.text ?? '');
+          else if (msg.action === 'stop') stopDiag();
+          return diagSnapshot(true);
+        }
         case 'search': {
           if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
           toast(`📱 Searching for “${msg.q}”…`);
