@@ -1,0 +1,71 @@
+name: Build Wander APK
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    env:
+      VERSION_NAME: 0.1.${{ github.run_number }}
+      VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Install
+        run: npm ci
+
+      - name: Test recommendation engine
+        run: npm test
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Copy into Android project
+        run: npx cap sync android
+
+      - name: Build signed APK
+        working-directory: app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/Wander-$VERSION_NAME.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wander-${{ env.VERSION_NAME }}
+          path: Wander-${{ env.VERSION_NAME }}.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_NAME }}
+          name: Wander ${{ env.VERSION_NAME }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: Wander-${{ env.VERSION_NAME }}.apk
+          body: |
+            Built from `${{ github.ref_name }}` @ ${{ github.sha }}.
+            On your phone: tap the .apk below to download, then open it to install or update.
