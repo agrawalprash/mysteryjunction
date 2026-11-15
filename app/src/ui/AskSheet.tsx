@@ -101,7 +101,13 @@ export function AskSheet({
       if (said) await submit(said);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(/no voice recognition/i.test(msg) ? `${msg} You can type instead.` : msg);
+      setError(
+        tv
+          ? `Voice isn’t working on this TV (${msg}). Speak into Wander on your phone instead: ✦ Ask → 📺 TV.`
+          : /no voice recognition/i.test(msg)
+            ? `${msg} You can type instead.`
+            : msg,
+      );
     }
   };
 

@@ -52,6 +52,8 @@ export interface Direction {
   tier: Tier;
   because: string;
   rowId?: string;
+  /** YouTube channel handles to read uploads from (cheap) before falling back to search. */
+  channels?: string[];
 }
 
 /** A row the viewer asked for ("add a row for live jazz"). Appears in every set. */

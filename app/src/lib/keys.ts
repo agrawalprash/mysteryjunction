@@ -9,16 +9,24 @@ export interface ApiKeys {
   anthropic: string;
   /** Only for Anthropic keys that aren't tied to one workspace (starts with "wrkspc_"). */
   anthropicWorkspace: string;
+  /** Optional GitHub token, used only to post app feedback to the repo's feedback inbox. */
+  github?: string;
 }
 
 const YT = 'youtube_api_key';
 const AN = 'anthropic_api_key';
 const WS = 'anthropic_workspace_id';
+const GH = 'github_token';
 
 export async function loadKeys(): Promise<ApiKeys> {
   try {
-    const [youtube, anthropic, ws] = await Promise.all([SecureStorage.getItem(YT), SecureStorage.getItem(AN), SecureStorage.getItem(WS)]);
-    return { youtube: youtube ?? '', anthropic: anthropic ?? '', anthropicWorkspace: ws ?? '' };
+    const [youtube, anthropic, ws, gh] = await Promise.all([
+      SecureStorage.getItem(YT),
+      SecureStorage.getItem(AN),
+      SecureStorage.getItem(WS),
+      SecureStorage.getItem(GH),
+    ]);
+    return { youtube: youtube ?? '', anthropic: anthropic ?? '', anthropicWorkspace: ws ?? '', github: gh ?? '' };
   } catch (e) {
     console.warn('Could not read keys', e);
     return { youtube: '', anthropic: '', anthropicWorkspace: '' };
@@ -32,6 +40,8 @@ export async function saveKeys(keys: ApiKeys): Promise<void> {
   else await SecureStorage.removeItem(AN);
   if (keys.anthropicWorkspace) await SecureStorage.setItem(WS, keys.anthropicWorkspace.trim());
   else await SecureStorage.removeItem(WS);
+  if (keys.github) await SecureStorage.setItem(GH, keys.github.trim());
+  else await SecureStorage.removeItem(GH);
 }
 
 export function claudeAuth(keys: ApiKeys) {

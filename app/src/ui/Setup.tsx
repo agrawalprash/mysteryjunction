@@ -28,7 +28,7 @@ export function Setup({
     e.preventDefault();
     setBusy(true);
     setError('');
-    const keys: ApiKeys = { youtube: youtube.trim(), anthropic: anthropic.trim(), anthropicWorkspace: workspace.trim() };
+    const keys: ApiKeys = { youtube: youtube.trim(), anthropic: anthropic.trim(), anthropicWorkspace: workspace.trim(), github: initial.github };
     try {
       try {
         await testYouTube(keys.youtube);

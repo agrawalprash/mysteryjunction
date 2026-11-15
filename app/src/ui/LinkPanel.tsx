@@ -86,7 +86,7 @@ export function PhoneLinkPanel({ keys }: { keys: ApiKeys }) {
               disabled={busy}
               onClick={() =>
                 run(async () => {
-                  await sendToTv({ type: 'keys', youtube: keys.youtube, anthropic: keys.anthropic, anthropicWorkspace: keys.anthropicWorkspace });
+                  await sendToTv({ type: 'keys', youtube: keys.youtube, anthropic: keys.anthropic, anthropicWorkspace: keys.anthropicWorkspace, github: keys.github });
                   return '✓ Keys sent. The TV is ready to use.';
                 })
               }

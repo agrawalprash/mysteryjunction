@@ -60,6 +60,8 @@ interface State {
   customRows: CustomRow[];
   asks: { text: string; reply: string; at: number }[];
   prepared: Prepared | null;
+  /** YouTube quota units the last few sets actually cost. */
+  setCosts: number[];
 }
 
 function fresh(): State {
@@ -82,6 +84,7 @@ function fresh(): State {
     customRows: [],
     asks: [],
     prepared: null,
+    setCosts: [],
   };
 }
 
@@ -177,7 +180,8 @@ function offlinePlan(focus = ''): Direction[] {
 }
 
 async function runDirections(directions: Direction[], keys: ApiKeys, onProgress: (msg: string) => void): Promise<Candidate[]> {
-  const affordable = Math.max(0, Math.floor((AUTO_BUDGET - quotaUsed()) / 101));
+  // Worst case each direction falls back to a 100-unit search.
+  const affordable = Math.max(0, Math.floor((AUTO_BUDGET - quotaUsed()) / 103));
   const todo = directions.slice(0, affordable);
   if (todo.length === 0) throw new Error('Today’s YouTube quota is used up. New videos tomorrow.');
   const results: Candidate[] = [];
@@ -260,9 +264,16 @@ export function buildTodaysFeed(keys: ApiKeys, onProgress: (msg: string) => void
   return newSet(keys, '', onProgress);
 }
 
+/** Typical quota cost of one set, from recent sets (channel reads are much cheaper than searches). */
+export function setCost(): number {
+  const recent = state.setCosts.slice(-5);
+  if (recent.length === 0) return SET_COST;
+  return Math.max(200, Math.round(recent.reduce((a, b) => a + b, 0) / recent.length));
+}
+
 /** How many more fresh sets today's YouTube quota allows (a prepared one counts). */
 export function setsLeftToday(): number {
-  return Math.max(0, Math.floor((AUTO_BUDGET - quotaUsed()) / SET_COST)) + (state.prepared ? 1 : 0);
+  return Math.max(0, Math.floor((AUTO_BUDGET - quotaUsed()) / setCost())) + (state.prepared ? 1 : 0);
 }
 
 /**
@@ -284,7 +295,7 @@ export function newSet(keys: ApiKeys, focus: string, onProgress: (msg: string) =
       afterShowing(keys, []);
       return feed;
     }
-    if (quotaUsed() + SET_COST > AUTO_BUDGET) throw new Error('That’s all the new sets YouTube allows for today. More tomorrow.');
+    if (quotaUsed() + setCost() > AUTO_BUDGET) throw new Error('That’s all the new sets YouTube allows for today. More tomorrow.');
     const { found, directions, note } = await gather(keys, focus, onProgress, true);
     onProgress('Picking your set…');
     const feed = install(found, directions, note, focus);
@@ -315,7 +326,9 @@ async function gather(keys: ApiKeys, focus: string, onProgress: (msg: string) =>
     directions = offlinePlan(focus);
   }
   onProgress(`Exploring ${directions.length} directions…`);
+  const before = quotaUsed();
   const found = await runDirections(directions, keys, onProgress);
+  state.setCosts = [...state.setCosts, quotaUsed() - before].slice(-10);
   await describe(found, auth, onProgress, quick ? QUICK_DESCRIBE : MAX_DESCRIBE);
   return { found, directions, note };
 }
@@ -354,7 +367,7 @@ let preparing: Promise<void> | null = null;
 /** Plan, search and describe the next set ahead of time, if quota allows (keeps room for one more on demand). */
 export function prepareNext(keys: ApiKeys): Promise<void> {
   if (state.prepared || preparing) return preparing ?? Promise.resolve();
-  if (quotaUsed() + 2 * SET_COST > AUTO_BUDGET) return Promise.resolve();
+  if (quotaUsed() + 2 * setCost() > AUTO_BUDGET) return Promise.resolve();
   preparing = (async () => {
     const { found, directions, note } = await gather(keys, '', () => undefined, false);
     mergePool(found);

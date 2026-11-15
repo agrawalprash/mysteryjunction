@@ -17,9 +17,10 @@ const Link = registerPlugin<LinkPlugin>('WanderLink');
 export type LinkMessage =
   | { type: 'hello' }
   | { type: 'ask'; text: string }
-  | { type: 'keys'; youtube: string; anthropic: string; anthropicWorkspace: string }
+  | { type: 'keys'; youtube: string; anthropic: string; anthropicWorkspace: string; github?: string }
   | { type: 'sync'; told: unknown }
-  | { type: 'newSet' };
+  | { type: 'newSet' }
+  | { type: 'search'; q: string };
 
 // ---------------------------------------------------------------- TV side
 

@@ -37,6 +37,7 @@ export async function runDiagnosis(keys: ApiKeys, symptoms: string, onProgress: 
   }
   report.liveSpeechTest = speech;
   report.wanderVersion = __APP_VERSION__;
+  report.screen = { cssWidth: window.innerWidth, cssHeight: window.innerHeight, devicePixelRatio: window.devicePixelRatio };
   onProgress('Claude is reading the report…');
   const diagnosis = await diagnoseDevice(auth, report, symptoms);
   return { report, diagnosis };
