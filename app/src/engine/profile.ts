@@ -1,7 +1,7 @@
 // The interest model: learns from what the viewer does, with no explicit input.
 // Pure functions over plain data so the logic is easy to test and tune.
 
-import type { Tier, TopicState, WatchRecord } from './types.ts';
+import type { Facets, Tier, TopicState, WatchRecord } from './types.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 export const SHORT_HALF_LIFE = 4 * DAY;
@@ -139,4 +139,33 @@ export function watchAgainCandidates(history: WatchRecord[], now: number): Watch
     .filter((w) => w.fraction >= 0.7 && now - w.at > 5 * DAY)
     .sort((a, b) => b.at - a.at)
     .filter((w) => (seen.has(w.videoId) ? false : (seen.add(w.videoId), true)));
+}
+
+// ---------------------------------------------------------------- facets
+// Format, pace and depth preferences, learned the same way as topics but kept
+// in a separate profile so they never show up as "interests".
+
+
+export function facetKeys(f: Facets): string[] {
+  return [`format:${f.format}`, `pace:${f.pace}`, `depth:${f.depth}`];
+}
+
+/** Facet signals are softer than topic signals: one video says less about format than subject. */
+export function addFacetSignal(facetProfile: Profile, f: Facets | undefined, amount: number, now: number): Profile {
+  if (!f) return facetProfile;
+  let p = facetProfile;
+  for (const k of facetKeys(f)) p = addSignal(p, k, amount * 0.6, now);
+  return p;
+}
+
+/** Multiplier for a candidate from learned format/pace/depth leanings (about 0.7–1.4). */
+export function facetBoost(facetProfile: Profile, f: Facets | undefined, now: number): number {
+  if (!f) return 1;
+  let m = 1;
+  for (const k of facetKeys(f)) {
+    const t = facetProfile[k];
+    if (t) m *= 1 + Math.max(-0.6, Math.min(interest(t, now), 1.2)) * 0.15;
+  }
+  if (f.clickbait) m *= 0.6;
+  return m;
 }

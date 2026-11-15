@@ -126,3 +126,52 @@ test('rows come out in the planned order with labels, and the feed is finite', (
   assert.ok(total <= 31);
   assert.ok(feed.shorts.length <= 10 && feed.shorts.length > 0);
 });
+
+// ---------------------------------------------------------------- facets
+
+import { addFacetSignal, facetBoost } from './profile.ts';
+import { FORMAT_CAP } from './feed.ts';
+import type { Facets } from './types.ts';
+
+const doc: Facets = { subject: 'x', format: 'documentary', pace: 'calm', depth: 'deep', clickbait: false };
+const vlog: Facets = { subject: 'y', format: 'vlog', pace: 'energetic', depth: 'light', clickbait: false };
+
+test('finishing calm documentaries makes similar videos rank higher, quick exits on vlogs lower', () => {
+  let fp: Profile = {};
+  for (let i = 0; i < 3; i++) fp = addFacetSignal(fp, doc, 1, NOW);
+  for (let i = 0; i < 3; i++) fp = addFacetSignal(fp, vlog, -0.4, NOW);
+  assert.ok(facetBoost(fp, doc, NOW) > 1.1);
+  assert.ok(facetBoost(fp, vlog, NOW) < 1);
+  assert.equal(facetBoost(fp, undefined, NOW), 1, 'undescribed videos are neutral');
+});
+
+test('clickbait is pushed down', () => {
+  assert.ok(facetBoost({}, { ...doc, clickbait: true }, NOW) < 0.7);
+});
+
+test('no single format dominates the feed', () => {
+  const pool = Array.from({ length: 40 }, (_, i) => cand(i % 2 ? 'core' : 'adjacent', `t${i}`, { facets: doc }));
+  pool.push(...Array.from({ length: 10 }, (_, i) => cand('wildcard', `w${i}`, { facets: { ...vlog, format: 'lecture' } })));
+  const feed = assembleFeed(pool, ctx(), '2026-11-15');
+  const docs = feed.rows.flatMap((r) => r.items).filter((i) => i.facets?.format === 'documentary').length;
+  assert.ok(docs <= FORMAT_CAP + 3, `got ${docs} documentaries`);
+});
+
+// ---------------------------------------------------------------- TV navigation
+
+import { directionalScore } from '../lib/spatialNav.ts';
+
+function rect(x: number, y: number, w = 300, h = 200) {
+  return { left: x, top: y, right: x + w, bottom: y + h, width: w, height: h, x, y, toJSON() {} } as DOMRect;
+}
+
+test('remote right stays in the row; down goes to the next row, not two rows down', () => {
+  const cur = rect(100, 100);
+  const sameRowNext = rect(420, 100);
+  const nextRowFar = rect(500, 400);
+  assert.ok(directionalScore(cur, sameRowNext, 'ArrowRight')! < directionalScore(cur, nextRowFar, 'ArrowRight')!);
+  const nextRowOffset = rect(300, 400);
+  const twoRowsDownAligned = rect(100, 700);
+  assert.ok(directionalScore(cur, nextRowOffset, 'ArrowDown')! < directionalScore(cur, twoRowsDownAligned, 'ArrowDown')!);
+  assert.equal(directionalScore(cur, rect(100, -300), 'ArrowDown'), null);
+});

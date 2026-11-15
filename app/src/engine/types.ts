@@ -14,6 +14,23 @@ export interface Video {
   likes: number;
   comments: number;
   thumb: string;
+  /** First part of the description, used when Claude describes the video. */
+  description?: string;
+}
+
+export const FORMATS = [
+  'documentary', 'lecture', 'explainer', 'process', 'performance', 'interview',
+  'travel', 'essay', 'tutorial', 'commentary', 'compilation', 'vlog', 'other',
+] as const;
+export type Format = (typeof FORMATS)[number];
+
+/** Claude's description of a video, used to learn taste beyond topic names. */
+export interface Facets {
+  subject: string;
+  format: Format;
+  pace: 'calm' | 'moderate' | 'energetic';
+  depth: 'light' | 'medium' | 'deep';
+  clickbait: boolean;
 }
 
 /** A video plus where it came from, so we can learn from what happens to it. */
@@ -23,6 +40,7 @@ export interface Candidate extends Video {
   because: string;
   query: string;
   fetchedAt: number;
+  facets?: Facets;
 }
 
 /** One search direction proposed by the planner (Claude or the offline fallback). */
@@ -61,6 +79,27 @@ export interface WatchRecord {
   watchedSec: number;
   fraction: number;
   at: number;
+  facets?: Facets;
+}
+
+/** A video opened and abandoned within seconds. */
+export interface ExitRecord {
+  title: string;
+  topic: string;
+  facets?: Facets;
+  at: number;
+}
+
+/** Claude's weekly written read of the viewer's taste. */
+export interface TasteProfile {
+  summary: string;
+  loves: string[];
+  avoid: string[];
+  curiousAbout: string[];
+  formatsLiked: string[];
+  formatsDisliked: string[];
+  generatedAt: number;
+  watchesSeen: number;
 }
 
 export interface FeedRow {

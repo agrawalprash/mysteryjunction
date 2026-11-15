@@ -1,16 +1,82 @@
 import { useState } from 'react';
 import type { ApiKeys } from '../lib/keys.ts';
-import { getState, rebuildToday, resetLearning } from '../lib/wander.ts';
+import { getState, maybeRefreshTaste, rebuildToday, resetLearning } from '../lib/wander.ts';
 import { DAILY_QUOTA, quotaUsed } from '../lib/youtube.ts';
+import { getSettings, LANGUAGES, updateSettings, type Settings as Prefs } from '../lib/settings.ts';
 import { rankTopics } from '../engine/profile.ts';
 
 declare const __APP_VERSION__: string;
 
-export function Settings({ keys, onBack, editKeys }: { keys: ApiKeys; onBack: () => void; editKeys: () => void }) {
+function Bars({ items }: { items: { name: string; score: number; freshness?: number; tag?: string }[] }) {
+  const maxAbs = Math.max(0.01, ...items.map((t) => Math.abs(t.score)));
+  return (
+    <ul className="topic-map">
+      {items.map((t) => (
+        <li key={t.name}>
+          <span className="topic-name">
+            {t.name}
+            {t.freshness !== undefined && t.freshness < 0.9 && <span className="tag">resting</span>}
+            {t.tag && <span className="tag tag-new">{t.tag}</span>}
+          </span>
+          <span className="bar-track">
+            <span
+              className={`bar ${t.score >= 0 ? 'bar-pos' : 'bar-neg'}`}
+              style={{ width: `${(Math.abs(t.score) / maxAbs) * 50}%`, [t.score >= 0 ? 'left' : 'right']: '50%' }}
+            />
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function Settings({
+  keys,
+  onBack,
+  editKeys,
+  onTvModeChange,
+  deviceIsTv,
+}: {
+  keys: ApiKeys;
+  onBack: () => void;
+  editKeys: () => void;
+  onTvModeChange: (m: Prefs['tvMode']) => void;
+  deviceIsTv: boolean;
+}) {
   const [, force] = useState(0);
+  const [prefs, setPrefs] = useState(getSettings());
+  const [tasteBusy, setTasteBusy] = useState(false);
+  const [tasteError, setTasteError] = useState('');
   const st = getState();
-  const topics = rankTopics(st.profile, Date.now()).slice(0, 40);
-  const maxAbs = Math.max(0.01, ...topics.map((t) => Math.abs(t.score)));
+  const now = Date.now();
+  const topics = rankTopics(st.profile, now)
+    .slice(0, 40)
+    .map((t) => ({
+      ...t,
+      tag: t.origin !== 'core' && t.origin !== 'search' && t.score >= 0.35 ? 'new interest' : undefined,
+    }));
+  const facets = rankTopics(st.facetProfile, now)
+    .filter((t) => Math.abs(t.score) > 0.05)
+    .map((t) => ({ name: t.name.replace(':', ': '), score: t.score }));
+  const taste = st.taste;
+
+  const set = (patch: Partial<Prefs>) => {
+    const next = updateSettings(patch);
+    setPrefs(next);
+    if (patch.tvMode) onTvModeChange(patch.tvMode);
+  };
+
+  const refreshTaste = async () => {
+    setTasteBusy(true);
+    setTasteError('');
+    try {
+      await maybeRefreshTaste(keys, true);
+    } catch (e) {
+      setTasteError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTasteBusy(false);
+    }
+  };
 
   return (
     <div className="screen settings">
@@ -22,34 +88,86 @@ export function Settings({ keys, onBack, editKeys }: { keys: ApiKeys; onBack: ()
       </header>
 
       <section className="panel">
-        <h3>What Wander thinks you like</h3>
-        <p className="muted small">Learned from what you watch and skip. Bars to the right are interests; to the left, things that didn’t land. Recently binged topics rest for a few days.</p>
-        {topics.length === 0 && <p className="muted">Nothing yet. Watch a few things.</p>}
-        <ul className="topic-map">
-          {topics.map((t) => (
-            <li key={t.name}>
-              <span className="topic-name">
-                {t.name}
-                {t.freshness < 0.9 && <span className="tag">resting</span>}
-                {t.origin !== 'core' && t.origin !== 'search' && t.score >= 0.35 && <span className="tag tag-new">new interest</span>}
-              </span>
-              <span className="bar-track">
-                <span
-                  className={`bar ${t.score >= 0 ? 'bar-pos' : 'bar-neg'}`}
-                  style={{ width: `${(Math.abs(t.score) / maxAbs) * 50}%`, [t.score >= 0 ? 'left' : 'right']: '50%' }}
-                />
-              </span>
-            </li>
-          ))}
-        </ul>
+        <h3>Claude’s read on your taste</h3>
+        {!keys.anthropic && <p className="muted small">Add an Anthropic key to get this.</p>}
+        {keys.anthropic && !taste && (
+          <p className="muted small">Written once you’ve watched a few videos, then refreshed weekly. It shapes every daily plan.</p>
+        )}
+        {taste && (
+          <div className="taste">
+            <p>{taste.summary}</p>
+            {taste.loves.length > 0 && (
+              <p>
+                <strong>Loves:</strong> {taste.loves.join(' · ')}
+              </p>
+            )}
+            {taste.curiousAbout.length > 0 && (
+              <p>
+                <strong>Curious about:</strong> {taste.curiousAbout.join(' · ')}
+              </p>
+            )}
+            {taste.formatsLiked.length > 0 && (
+              <p>
+                <strong>Formats that land:</strong> {taste.formatsLiked.join(' · ')}
+              </p>
+            )}
+            {taste.avoid.length > 0 && (
+              <p>
+                <strong>Not for you:</strong> {[...taste.avoid, ...taste.formatsDisliked].join(' · ')}
+              </p>
+            )}
+            <p className="muted small">Written {new Date(taste.generatedAt).toLocaleDateString('en-GB')} from {taste.watchesSeen} watched videos.</p>
+          </div>
+        )}
+        {keys.anthropic && (
+          <button className="btn btn-ghost" disabled={tasteBusy} onClick={refreshTaste}>
+            {tasteBusy ? 'Claude is reading your history…' : taste ? 'Rewrite now' : 'Write it now'}
+          </button>
+        )}
+        {tasteError && <p className="muted small">{tasteError}</p>}
+      </section>
+
+      <section className="panel">
+        <h3>What Wander has learned</h3>
+        <p className="muted small">From what you watch and skip. Bars to the right are interests; to the left, things that didn’t land. Recently binged topics rest for a few days.</p>
+        {topics.length === 0 ? <p className="muted">Nothing yet. Watch a few things.</p> : <Bars items={topics} />}
+        {facets.length > 0 && (
+          <>
+            <h4>Kinds of video</h4>
+            <Bars items={facets} />
+          </>
+        )}
+      </section>
+
+      <section className="panel">
+        <h3>Display</h3>
+        <label className="field">
+          <span>TV layout</span>
+          <select value={prefs.tvMode} onChange={(e) => set({ tvMode: e.target.value as Prefs['tvMode'] })}>
+            <option value="auto">Automatic ({deviceIsTv ? 'this is a TV' : 'this is not a TV'})</option>
+            <option value="on">Always on</option>
+            <option value="off">Always off</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Video language</span>
+          <select value={prefs.language} onChange={(e) => set({ language: e.target.value })}>
+            {LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">The language Wander searches in. The app itself is always in English.</p>
       </section>
 
       <section className="panel">
         <h3>Today</h3>
         <p>
-          YouTube quota used: {quotaUsed().toLocaleString()} / {DAILY_QUOTA.toLocaleString()}
+          YouTube quota used: {quotaUsed().toLocaleString('en-US')} / {DAILY_QUOTA.toLocaleString('en-US')}
         </p>
-        <p className="muted small">Videos watched so far: {st.history.length}. Claude planner: {keys.anthropic ? 'on' : 'off (no key)'}.</p>
+        <p className="muted small">Videos watched so far: {st.history.length}. Claude: {keys.anthropic ? 'on' : 'off (no key)'}.</p>
         <button
           className="btn btn-ghost"
           onClick={() => {
@@ -72,7 +190,7 @@ export function Settings({ keys, onBack, editKeys }: { keys: ApiKeys; onBack: ()
 
       <section className="panel">
         <h3>Start over</h3>
-        <p className="muted small">Forget everything Wander has learned (interests, history, hidden channels). Keys are kept.</p>
+        <p className="muted small">Forget everything Wander has learned (interests, history, taste profile, hidden channels). Keys are kept.</p>
         <button
           className="btn btn-danger"
           onClick={() => {

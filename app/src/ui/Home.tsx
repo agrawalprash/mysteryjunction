@@ -4,7 +4,8 @@ import type { Candidate, DailyFeed } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
 import { buildTodaysFeed, getState, surprise, SURPRISES_PER_DAY, todaysFeed } from '../lib/wander.ts';
 import { VideoCard } from './VideoCard.tsx';
-import type { Screen } from './App.tsx';
+import { useTv, type Screen } from './App.tsx';
+import { focusFirst } from '../lib/spatialNav.ts';
 
 export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Candidate) => void; go: (s: Screen) => void; visible: boolean }) {
   const [feed, setFeed] = useState<DailyFeed | null>(todaysFeed());
@@ -12,6 +13,15 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<Set<string>>(new Set(getState().opened));
+  const tv = useTv();
+
+  // On TV, once the feed arrives, start on the first video instead of the header.
+  useEffect(() => {
+    if (!tv || !feed || !visible) return;
+    const a = document.activeElement;
+    if (!a || a === document.body || a.closest('.topbar')) focusFirst('.row .card');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tv, feed]);
 
   const load = useCallback(async () => {
     if (todaysFeed()) {
@@ -73,7 +83,7 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
     <div className="screen home">
       <header className="topbar">
         <div className="logo">
-          <span className="logo-mark">▶</span> Wander
+          <span className="logo-mark">✦</span> Wander
         </div>
         <div className="topbar-actions">
           <button className="icon-btn" aria-label="Search" onClick={() => go({ kind: 'search' })}>
