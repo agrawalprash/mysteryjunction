@@ -2,10 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
-import { buildTodaysFeed, getState, surprise, SURPRISES_PER_DAY, todaysFeed } from '../lib/wander.ts';
+import { buildTodaysFeed, getState, newSet, setsLeftToday, surprise, SURPRISES_PER_DAY, todaysFeed } from '../lib/wander.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { useTv, type Screen } from './App.tsx';
 import { focusFirst } from '../lib/spatialNav.ts';
+import { onVoiceKey } from '../lib/voice.ts';
+import { setOverlayCloser } from '../lib/overlay.ts';
+import { AskSheet } from './AskSheet.tsx';
+import { UpdateBanner } from './UpdateBanner.tsx';
 
 export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Candidate) => void; go: (s: Screen) => void; visible: boolean }) {
   const [feed, setFeed] = useState<DailyFeed | null>(todaysFeed());
@@ -13,7 +17,33 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<Set<string>>(new Set(getState().opened));
+  const [asking, setAsking] = useState<null | { voice: boolean }>(null);
   const tv = useTv();
+
+  const closeAsk = useCallback(() => {
+    setAsking(null);
+    setOverlayCloser(null);
+  }, []);
+  const openAsk = useCallback(
+    (voice: boolean) => {
+      setAsking({ voice });
+      setOverlayCloser(() => setAsking(null));
+    },
+    [],
+  );
+
+  // The remote's mic button (when it reaches the app) opens Ask Wander and starts listening.
+  useEffect(() => {
+    if (!visible) return;
+    return onVoiceKey(() => openAsk(true));
+  }, [visible, openAsk]);
+
+  const showNewFeed = (f: DailyFeed) => {
+    setFeed(f);
+    setOpened(new Set(getState().opened));
+    window.scrollTo({ top: 0 });
+    if (tv) window.setTimeout(() => focusFirst('.row .card'), 80);
+  };
 
   // On TV, once the feed arrives, start on the first video instead of the header.
   useEffect(() => {
@@ -64,6 +94,19 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  const doNewSet = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      showNewFeed(await newSet(keys, '', setProgress));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setProgress('');
+    }
+  };
+
   const doSurprise = async () => {
     setBusy(true);
     setError('');
@@ -86,6 +129,11 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
           <span className="logo-mark">✦</span> Wander
         </div>
         <div className="topbar-actions">
+          {keys.anthropic && (
+            <button className="ask-btn" onClick={() => openAsk(tv)}>
+              ✦ Ask
+            </button>
+          )}
           <button className="icon-btn" aria-label="Search" onClick={() => go({ kind: 'search' })}>
             <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14" /></svg>
           </button>
@@ -95,11 +143,18 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
         </div>
       </header>
 
+      <UpdateBanner />
+
       {!feed && busy && (
         <div className="loading">
           <div className="spinner" />
-          <p>{progress || 'Planning today’s picks…'}</p>
-          <p className="muted small">This happens once a day and takes about half a minute.</p>
+          <p>{progress || 'Planning your picks…'}</p>
+          <p className="muted small">The first set takes about half a minute. After that, the next one is prepared in the background.</p>
+        </div>
+      )}
+      {feed && busy && (
+        <div className="busy-strip">
+          <div className="spinner small-spinner" /> {progress || 'Working…'}
         </div>
       )}
 
@@ -117,6 +172,7 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
       {feed && (
         <main>
           {feed.plannerNote && <p className="planner-note">{feed.plannerNote}</p>}
+          {feed.rows.length === 0 && <p className="muted planner-note">Nothing matched this time. Try a new set or ask for something.</p>}
           {feed.rows.map((row) => (
             <section key={row.id} className="row">
               <h2>{row.title}</h2>
@@ -143,18 +199,32 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
 
           <section className="the-end">
             <div className="the-end-mark">✦</div>
-            <h3>That’s today’s picks</h3>
-            <p className="muted">A new set arrives tomorrow. Wander learns from what you watch, so there’s nothing to rate.</p>
-            {surprisesLeft > 0 ? (
-              <button className="btn" disabled={busy} onClick={doSurprise}>
-                {busy ? progress || 'Looking…' : `Surprise me (${surprisesLeft} left today)`}
-              </button>
-            ) : (
-              <p className="muted small">No surprises left today.</p>
-            )}
+            <h3>That’s this set</h3>
+            <p className="muted">Wander learns from what you watch, so there’s nothing to rate. Want something else? Ask, or get a new set.</p>
+            <div className="end-actions">
+              {setsLeftToday() > 0 ? (
+                <button className="btn" disabled={busy} onClick={doNewSet}>
+                  New set ({setsLeftToday()} left today)
+                </button>
+              ) : (
+                <p className="muted small">No new sets left today (YouTube’s daily limit).</p>
+              )}
+              {keys.anthropic && (
+                <button className="btn btn-ghost" disabled={busy} onClick={() => openAsk(tv)}>
+                  ✦ Ask Wander
+                </button>
+              )}
+              {surprisesLeft > 0 && (
+                <button className="btn btn-ghost" disabled={busy} onClick={doSurprise}>
+                  Surprise me ({surprisesLeft})
+                </button>
+              )}
+            </div>
           </section>
         </main>
       )}
+
+      {asking && <AskSheet keys={keys} startWithVoice={asking.voice} onClose={closeAsk} onFeed={showNewFeed} />}
     </div>
   );
 }

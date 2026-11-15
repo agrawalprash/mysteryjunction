@@ -2,6 +2,7 @@ package io.github.agrawalprash.wander;
 
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -20,10 +21,31 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(DevicePlugin.class);
+        registerPlugin(UpdaterPlugin.class);
+        registerPlugin(VoicePlugin.class);
         super.onCreate(savedInstanceState);
         if (bridge != null) {
             bridge.getWebView().setWebChromeClient(new FullscreenChromeClient(bridge));
         }
+    }
+
+    /**
+     * Remote mic/search buttons arrive here. We pass them to the web app so it can
+     * start voice input. (Some remotes send these straight to Google Assistant
+     * instead, in which case they never reach us; Settings has a test for that.)
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int code = event.getKeyCode();
+        boolean voiceKey = code == KeyEvent.KEYCODE_SEARCH || code == KeyEvent.KEYCODE_VOICE_ASSIST || code == KeyEvent.KEYCODE_ASSIST;
+        if (voiceKey && bridge != null) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                com.getcapacitor.PluginHandle h = bridge.getPlugin("WanderVoice");
+                if (h != null) ((VoicePlugin) h.getInstance()).relayVoiceKey(code);
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     /**

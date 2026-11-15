@@ -14,7 +14,9 @@ function isVisible(el: HTMLElement): boolean {
 }
 
 function candidates(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(isVisible);
+  // While a panel is open, keep focus inside it.
+  const scope: ParentNode = document.querySelector('[role="dialog"]') ?? document;
+  return [...scope.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(isVisible);
 }
 
 /** Score how good `r` is as the next stop from `c` going `dir` (lower is better). */
@@ -74,7 +76,8 @@ function move(dir: Dir): boolean {
 
 /** Focus the first sensible element on screen (used when a screen opens). */
 export function focusFirst(selector = '[data-autofocus]') {
-  const preferred = document.querySelector<HTMLElement>(selector);
+  const scope: ParentNode = document.querySelector('[role="dialog"]') ?? document;
+  const preferred = scope.querySelector<HTMLElement>(selector);
   const target = preferred && isVisible(preferred) ? preferred : candidates().find((el) => el.getBoundingClientRect().top >= 0);
   target?.focus({ preventScroll: true });
   target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });

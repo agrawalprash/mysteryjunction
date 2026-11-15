@@ -239,3 +239,53 @@ body.tv .setup input { font-size: 22px; }
 body.tv .card-list .thumb { flex: 0 0 360px; }
 body.tv .card-list { padding: 10px 6px; }
 body.tv .related h3 { font-size: 26px; margin: 28px 0 8px; }
+
+/* ------------------------------------------------------------ Ask Wander, updates, new sets */
+.ask-btn {
+  border: 0; border-radius: 999px; padding: 7px 14px; background: var(--brand); color: #0f0f0f;
+  font-weight: 700; cursor: pointer; margin-right: 4px;
+}
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.sheet {
+  width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto;
+  background: var(--surface); border-radius: 18px 18px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+}
+.sheet h2 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; font-size: 20px; }
+.ask-row { display: flex; gap: 10px; margin: 12px 0; }
+.mic-btn { flex: 0 0 auto; background: var(--brand); color: #0f0f0f; }
+.ask-form { flex: 1; }
+.ask-form input {
+  width: 100%; padding: 11px 14px; border-radius: 999px; border: 1px solid #3a3a3a;
+  background: #121212; color: var(--text); font-size: 16px;
+}
+.chip-row.wrap { flex-wrap: wrap; overflow: visible; margin: 4px 0 8px; padding: 0; }
+.heard { font-style: italic; color: var(--muted); margin: 10px 0 4px; }
+.reply { font-size: 17px; margin: 8px 0; }
+.changes { margin: 4px 0 8px; padding-left: 20px; color: var(--good); font-size: 14px; }
+.ask-progress, .busy-strip { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+.busy-strip { margin: 8px 16px 0; padding: 8px 12px; background: var(--surface); border-radius: 10px; }
+.small-spinner { width: 18px; height: 18px; border-width: 2px; margin: 0; }
+.end-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 12px; }
+.end-actions.left { justify-content: flex-start; }
+.update-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 8px 16px 0; padding: 12px 14px; border-radius: 12px; background: #1d2a3a;
+}
+.panel .update-banner { margin: 8px 0 0; }
+.update-notes { white-space: pre-line; margin: 4px 0 0; }
+.error-text { color: #ffb4b4; }
+.told { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.told li { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 14px; }
+
+body.tv .ask-btn { font-size: 22px; padding: 10px 22px; margin-right: 10px; }
+body.tv .sheet-backdrop { align-items: center; }
+body.tv .sheet { max-width: 1000px; border-radius: 18px; padding: 32px 40px; }
+body.tv .sheet h2 { font-size: 30px; }
+body.tv .ask-form input { font-size: 22px; padding: 14px 20px; }
+body.tv .reply { font-size: 26px; }
+body.tv .heard, body.tv .changes, body.tv .busy-strip, body.tv .ask-progress { font-size: 20px; }
+body.tv .busy-strip, body.tv .update-banner { margin-left: 0; margin-right: 0; }
+body.tv .sheet .small, body.tv .panel .small { font-size: 18px; }

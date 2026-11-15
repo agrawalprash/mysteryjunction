@@ -6,7 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
-import { FORMATS, type Candidate, type Direction, type ExitRecord, type Facets, type TasteProfile, type WatchRecord } from '../engine/types.ts';
+import { FORMATS, type Candidate, type CustomRow, type Direction, type ExitRecord, type Facets, type TasteProfile, type WatchRecord } from '../engine/types.ts';
 
 const MODEL = 'claude-opus-5-5';
 // If a request is declined by a safety classifier, the API retries it on a suitable fallback model.
@@ -44,6 +44,8 @@ const Item = z.object({
 });
 
 const Plan = z.object({
+  focus: z.array(Item).describe('Directions for what the viewer asked for right now. Empty when there is no request.'),
+  custom: z.array(z.object({ row: z.string().describe('The custom row title, exactly as given.'), items: z.array(Item) })),
   core: z.array(Item),
   adjacent: z.array(Item),
   wildcard: z.array(Item),
@@ -62,6 +64,13 @@ export interface PlannerInput {
   recentTopics: string[];
   formatLeanings: { name: string; score: number }[];
   taste: TasteProfile | null;
+  /** Long-term interests the viewer explicitly asked Wander to remember. */
+  pinned: string[];
+  /** Standing instructions, e.g. "no true crime". */
+  rules: string[];
+  customRows: CustomRow[];
+  /** What the viewer asked for right now, e.g. "music". */
+  focus: string;
   language: string;
 }
 
@@ -81,10 +90,14 @@ Principles:
 - archive: classic older videos (the app restricts these searches to before ~2016), e.g. old lectures, early YouTube craft channels, vintage TV segments.
 - shorts: light, delightful topics that work in under a minute.
 - "because" is shown to the viewer. Keep it under 8 words, warm and specific.
+- The viewer's own instructions win: always follow their standing rules, always cover some of their pinned long-term interests in core, and fill each of their custom rows with directions that fit its brief.
+- When the viewer asked for something right now (focus), the focus directions are the heart of this set: still personalised to their taste, varied within the request, with one or two surprising takes. Other tiers stay as usual but may lean toward it where natural.
 - Write every query, topic and "because" in the viewer's language.`;
 
 function describeViewer(input: PlannerInput): string {
   const lines: string[] = [];
+  if (input.rules.length) lines.push(`Standing rules from the viewer (always follow): ${input.rules.join('; ')}`, '');
+  if (input.pinned.length) lines.push(`Long-term interests the viewer asked you to remember: ${input.pinned.join('; ')}`, '');
   if (input.taste) {
     const t = input.taste;
     lines.push('Written taste profile (from their full history):', t.summary);
@@ -111,6 +124,11 @@ function describeViewer(input: PlannerInput): string {
   if (input.misses.length) lines.push('', `Recently skipped topics: ${input.misses.join('; ')}`);
   if (input.recentSearches.length) lines.push('', `Recent searches: ${input.recentSearches.join('; ')}`);
   if (input.recentTopics.length) lines.push('', `Recently used topics (do not repeat): ${input.recentTopics.join('; ')}`);
+  if (input.customRows.length) {
+    lines.push('', 'The viewer\'s own rows (fill each one):');
+    for (const r of input.customRows) lines.push(`- "${r.title}": ${r.brief}`);
+  }
+  if (input.focus) lines.push('', `The viewer asked for this right now: ${input.focus}`);
   lines.push('', `Viewer language: ${input.language}`);
   return lines.join('\n');
 }
@@ -122,7 +140,24 @@ function toDirections(items: z.infer<typeof Item>[], tier: Direction['tier'], ma
     .map((i) => ({ topic: i.topic.trim(), query: i.query.trim(), because: i.because.trim(), tier }));
 }
 
+/** How many searches of each kind one set uses (100 YouTube quota units each). */
+export function planShape(input: Pick<PlannerInput, 'focus' | 'customRows'>) {
+  return input.focus
+    ? { focus: 5, core: 3, adjacent: 4, wildcard: 4, archive: 1, shorts: 3, perCustomRow: 2 }
+    : { focus: 0, core: 5, adjacent: 5, wildcard: 5, archive: 2, shorts: 3, perCustomRow: 2 };
+}
+
 export async function planDay(auth: ClaudeAuth, input: PlannerInput): Promise<{ directions: Direction[]; note: string }> {
+  const n = planShape(input);
+  const ask = [
+    n.focus ? `exactly ${n.focus} focus` : 'no focus (empty array)',
+    `${n.core} core`,
+    `${n.adjacent} adjacent`,
+    `${n.wildcard} wildcard`,
+    `${n.archive} archive`,
+    `${n.shorts} shorts`,
+    input.customRows.length ? `${n.perCustomRow} directions for each custom row` : 'no custom rows (empty array)',
+  ].join(', ');
   const res = await client(auth).beta.messages.parse({
     model: MODEL,
     max_tokens: 16000,
@@ -132,7 +167,7 @@ export async function planDay(auth: ClaudeAuth, input: PlannerInput): Promise<{ 
     messages: [
       {
         role: 'user',
-        content: `${describeViewer(input)}\n\nPlan today's feed: exactly 5 core, 5 adjacent, 5 wildcard, 2 archive and 4 shorts directions.`,
+        content: `${describeViewer(input)}\n\nPlan the next set: ${ask}.`,
       },
     ],
   });
@@ -140,11 +175,16 @@ export async function planDay(auth: ClaudeAuth, input: PlannerInput): Promise<{ 
   const p = res.parsed_output;
   return {
     directions: [
-      ...toDirections(p.core, 'core', 6),
-      ...toDirections(p.adjacent, 'adjacent', 6),
-      ...toDirections(p.wildcard, 'wildcard', 6),
-      ...toDirections(p.archive, 'archive', 3),
-      ...toDirections(p.shorts, 'shorts', 4),
+      ...toDirections(p.focus, 'focus', n.focus),
+      ...input.customRows.flatMap((row) => {
+        const match = p.custom.find((c) => c.row.trim().toLowerCase() === row.title.toLowerCase());
+        return match ? toDirections(match.items, 'custom', n.perCustomRow).map((d) => ({ ...d, rowId: row.id })) : [];
+      }),
+      ...toDirections(p.core, 'core', n.core + 1),
+      ...toDirections(p.adjacent, 'adjacent', n.adjacent + 1),
+      ...toDirections(p.wildcard, 'wildcard', n.wildcard + 1),
+      ...toDirections(p.archive, 'archive', n.archive),
+      ...toDirections(p.shorts, 'shorts', n.shorts),
     ],
     note: p.note,
   };
@@ -275,4 +315,60 @@ export async function writeTasteProfile(auth: ClaudeAuth, input: TasteInput): Pr
     generatedAt: Date.now(),
     watchesSeen: input.watches.length,
   };
+}
+
+// ---------------------------------------------------------------- talking to Wander
+
+const Ask = z.object({
+  reply: z.string().describe('1–2 short, warm sentences to the viewer saying what you are doing. No questions back.'),
+  new_set: z.boolean().describe('Build a fresh set of videos now.'),
+  focus: z.string().describe('What the new set should centre on (e.g. "music: live sessions and world music"). Empty if none.'),
+  add_rows: z.array(z.object({ title: z.string().describe('Short row title, 2–5 words.'), brief: z.string().describe('What belongs in the row, one sentence.') })),
+  remove_rows: z.array(z.string()).describe('Titles of existing custom rows to remove.'),
+  add_interests: z.array(z.string()).describe('Long-term interests to remember, short topic names.'),
+  remove_interests: z.array(z.string()).describe('Remembered interests to forget, exactly as listed.'),
+  add_rules: z.array(z.string()).describe('Standing instructions to remember, e.g. "No true crime".'),
+  remove_rules: z.array(z.string()).describe('Standing rules to drop, exactly as listed.'),
+});
+export type AskResult = z.infer<typeof Ask>;
+
+export interface AskContext {
+  request: string;
+  pinned: string[];
+  rules: string[];
+  customRows: CustomRow[];
+  taste: TasteProfile | null;
+  interests: string[];
+  currentFocus: string;
+}
+
+const ASK_SYSTEM = `You are the voice of Wander, a YouTube app that plans varied, interesting feeds for one person. The viewer just told you something, usually by voice (so expect transcription slips). Decide what to change:
+- A mood or wish for now ("music today", "something funny", "short stuff please", "refresh", "show me something else") -> new_set true and a focus describing it (empty focus for a plain refresh).
+- A lasting new category ("add a row for live jazz", "I want a cooking section") -> add_rows. Usually also new_set true so they can see it.
+- A lasting interest ("remember I love maritime history", "I'm into F1 now") -> add_interests. A lasting dislike or instruction ("no more true crime", "fewer long videos") -> add_rules.
+- Requests to stop something -> remove_rows / remove_interests / remove_rules using the exact existing names, or add a rule.
+- Several of these can apply at once. If they only ask a question, answer briefly in reply and change nothing.
+Keep their personal taste in mind: a focus like "music" should be personalised by what you know about them.`;
+
+export async function askWander(auth: ClaudeAuth, ctx: AskContext): Promise<AskResult> {
+  const lines = [
+    `Viewer said: "${ctx.request}"`,
+    '',
+    `Custom rows: ${ctx.customRows.map((r) => `"${r.title}" (${r.brief})`).join('; ') || 'none'}`,
+    `Remembered interests: ${ctx.pinned.join('; ') || 'none'}`,
+    `Standing rules: ${ctx.rules.join('; ') || 'none'}`,
+    `Learned interests: ${ctx.interests.join('; ') || 'none yet'}`,
+    `Taste profile: ${ctx.taste?.summary ?? 'not written yet'}`,
+    `Current set is centred on: ${ctx.currentFocus || 'nothing in particular'}`,
+  ];
+  const res = await client(auth).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 8000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(Ask) },
+    system: ASK_SYSTEM,
+    messages: [{ role: 'user', content: lines.join('\n') }],
+  });
+  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude didn’t answer that one. Try saying it differently.');
+  return res.parsed_output;
 }
