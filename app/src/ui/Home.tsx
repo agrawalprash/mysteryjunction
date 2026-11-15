@@ -7,6 +7,7 @@ import { VideoCard } from './VideoCard.tsx';
 import { useTv, type Screen } from './App.tsx';
 import { focusFirst } from '../lib/spatialNav.ts';
 import { onVoiceKey } from '../lib/voice.ts';
+import { linkedTv } from '../lib/link.ts';
 import { setOverlayCloser } from '../lib/overlay.ts';
 import { AskSheet } from './AskSheet.tsx';
 import { FeedbackSheet } from './FeedbackSheet.tsx';
@@ -146,6 +147,11 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
           <span className="logo-mark">✦</span> Wander
         </div>
         <div className="topbar-actions">
+          {!tv && linkedTv() && (
+            <button className="icon-btn" aria-label="TV remote" onClick={() => go({ kind: 'remote' })}>
+              📺
+            </button>
+          )}
           {keys.anthropic && (
             <button className="ask-btn" onClick={() => openAsk(false)}>
               ✦ Ask

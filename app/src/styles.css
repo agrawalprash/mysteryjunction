@@ -371,3 +371,11 @@ body.tv .diag-final-text { font-size: 1.35rem; }
 @keyframes blink { 50% { opacity: 0.3; } }
 .term-input { margin-top: 10px; }
 body.tv .term { font-size: 1.05rem; }
+/* Phone as TV remote */
+.now-playing .np-row { display: flex; gap: 12px; align-items: center; }
+.now-playing img { width: 120px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; }
+.np-progress { height: 4px; background: var(--surface-2); border-radius: 2px; margin: 12px 0; overflow: hidden; }
+.np-progress span { display: block; height: 100%; background: var(--accent); }
+.np-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.remote-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 16px; }
+.remote-actions .btn { width: 100%; }

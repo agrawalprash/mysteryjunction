@@ -4,6 +4,8 @@
 
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { load, save, remove } from './store.ts';
+import type { Candidate } from '../engine/types.ts';
+import type { PlayerAction } from './nowPlaying.ts';
 
 interface LinkPlugin {
   startServer(): Promise<{ port: number; addresses: string[] }>;
@@ -21,7 +23,12 @@ export type LinkMessage =
   | { type: 'sync'; told: unknown }
   | { type: 'newSet' }
   | { type: 'search'; q: string }
-  | { type: 'diag'; action: 'state' | 'start' | 'say' | 'stop'; text?: string };
+  | { type: 'diag'; action: 'state' | 'start' | 'say' | 'stop'; text?: string }
+  | { type: 'tvState'; feedVersion?: number }
+  | { type: 'play'; video: Candidate }
+  | { type: 'player'; action: PlayerAction | 'close' }
+  | { type: 'home' }
+  | { type: 'update' };
 
 // ---------------------------------------------------------------- TV side
 
