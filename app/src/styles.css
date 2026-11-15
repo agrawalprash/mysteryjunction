@@ -336,3 +336,17 @@ body.tv .topbar { background: var(--bg); }
 body.tv .feedback-text { font-size: 1.375rem; }
 body.tv .thread p { font-size: 1.125rem; }
 .token-input { width: 16em; letter-spacing: 0; font-size: 14px; }
+.diag-console { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.diag-thought { margin: 4px 0; font-size: 14px; }
+.diag-prompt { margin: 4px 0; font-size: 14px; color: var(--brand); }
+.diag-tool { background: #151515; border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+.diag-tool summary { cursor: pointer; }
+.diag-tool code { color: var(--muted); word-break: break-all; }
+.diag-tool-error summary { color: #ffb4b4; }
+.diag-final { margin-top: 10px; padding: 12px 14px; border-radius: 12px; background: #1d2a3a; }
+.diag-final h4 { margin: 0 0 6px; color: var(--text); font-size: 16px; }
+.diag-final-text { white-space: pre-wrap; font-size: 15px; line-height: 1.5; }
+.diag-question { margin-top: 12px; padding: 12px; border-radius: 12px; border: 1px solid var(--brand); }
+body.tv .diag-thought, body.tv .diag-prompt { font-size: 1.25rem; }
+body.tv .diag-tool { font-size: 1.05rem; }
+body.tv .diag-final-text { font-size: 1.35rem; }

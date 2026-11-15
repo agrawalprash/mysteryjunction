@@ -1,75 +1,207 @@
-import { useState } from 'react';
-import type { ApiKeys } from '../lib/keys.ts';
-import { DEFAULT_SYMPTOMS, runDiagnosis, type DiagnosisRun } from '../lib/diagnostics.ts';
+import { useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { claudeAuth, type ApiKeys } from '../lib/keys.ts';
+import { DEFAULT_SYMPTOMS } from '../lib/diagnostics.ts';
+import { investigate, type Step } from '../lib/investigate.ts';
+import { listen } from '../lib/voice.ts';
+import { useTv } from './App.tsx';
 
-/** Collects facts about this device's voice setup and asks Claude what's wrong. */
+const TOOL_LABEL: Record<string, string> = {
+  device_report: 'Device report',
+  run_command: 'Command',
+  package_details: 'App details',
+  query_intent: 'Who handles',
+  get_setting: 'Setting',
+  http_check: 'Network check',
+  speech_test: 'Live speech test',
+  audio_probe: 'Microphone probe',
+  ask_user: 'Question for you',
+};
+
+function describeInput(name: string, input: Record<string, unknown>): string {
+  if (name === 'run_command') return String(input.command);
+  if (name === 'package_details') return String(input.package);
+  if (name === 'query_intent') return String(input.action);
+  if (name === 'get_setting') return `${input.table} ${input.key}`;
+  if (name === 'http_check') return String(input.url);
+  if (name === 'speech_test') return String(input.language);
+  if (name === 'audio_probe') return `${input.seconds}s, source ${input.source}${Number(input.device_id) > 0 ? `, device ${input.device_id}` : ''}`;
+  return '';
+}
+
+interface Pending {
+  question: string;
+  options: string[];
+  resolve: (answer: string) => void;
+}
+
+/** Claude investigates this device with read-only tools; every step is shown as it happens. */
 export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
+  const tv = useTv();
   const [symptoms, setSymptoms] = useState(DEFAULT_SYMPTOMS);
-  const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState('');
-  const [result, setResult] = useState<DiagnosisRun | null>(null);
-  const [error, setError] = useState('');
+  const [running, setRunning] = useState(false);
+  const [steps, setSteps] = useState<Step[]>([]);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [answer, setAnswer] = useState('');
+  const cancelled = useRef(false);
+  // The list of steps lives in a ref so the investigation can address steps by index synchronously.
+  const log = useRef<Step[]>([]);
+  const push = (s: Step) => {
+    log.current = [...log.current, s];
+    setSteps(log.current);
+    return log.current.length - 1;
+  };
+  const replaceAt = (i: number, s: Step) => {
+    log.current = log.current.map((x, j) => (j === i ? s : x));
+    setSteps(log.current);
+  };
+  const consoleRef = useRef<HTMLDivElement>(null);
 
-  const run = async () => {
-    setBusy(true);
-    setError('');
-    setResult(null);
+  const follow = () =>
+    window.setTimeout(() => consoleRef.current?.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+
+  const start = async () => {
+    const auth = claudeAuth(keys);
+    if (!auth) return;
+    cancelled.current = false;
+    log.current = [];
+    setSteps([]);
+    setRunning(true);
     try {
-      setResult(await runDiagnosis(keys, symptoms, setProgress));
+      await investigate(
+        auth,
+        symptoms,
+        {
+          step: (s, index) => {
+            follow();
+            if (index === undefined) return push(s);
+            replaceAt(index, s);
+            return index;
+          },
+          ask: (question, options) =>
+            new Promise<string>((resolve) => {
+              setAnswer('');
+              setPending({ question, options, resolve });
+              push({ kind: 'prompt', text: question });
+              window.setTimeout(() => document.querySelector<HTMLElement>('.diag-question button')?.focus(), 80);
+              follow();
+            }),
+        },
+        () => cancelled.current,
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      push({ kind: 'error', text: e instanceof Error ? e.message : String(e) });
     } finally {
-      setBusy(false);
-      setProgress('');
+      setRunning(false);
+      setPending(null);
     }
   };
 
-  const d = result?.diagnosis;
+  const reply = (a: string) => {
+    if (!pending || !a.trim()) return;
+    pending.resolve(a.trim());
+    push({ kind: 'thought', text: `You: ${a.trim()}` });
+    setPending(null);
+  };
+
   return (
     <section className="panel">
-      <h3>Diagnose voice problems with Claude</h3>
+      <h3>Diagnose with Claude</h3>
       <p className="muted small">
-        Wander checks this device’s voice setup (speech apps, permissions, default assistant, remotes, whether Google’s servers are reachable on
-        your network) and runs a short live speech test. Claude then explains what’s most likely wrong. Nothing is changed on the device.
+        Claude investigates this device itself: it runs read-only checks (commands like getprop and dumpsys, app permissions, voice settings,
+        network tests, a microphone probe, live speech tests in different languages), asks you to press things when needed, and explains what it
+        found. Nothing is changed. A run takes a few minutes and costs roughly 50 cents to $1 in Claude usage.
       </p>
-      <label className="small muted">What’s happening (edit if needed)</label>
-      <textarea value={symptoms} onChange={(e) => setSymptoms(e.target.value)} disabled={busy} />
+      <label className="small muted">What’s wrong (edit if needed)</label>
+      <textarea value={symptoms} onChange={(e) => setSymptoms(e.target.value)} disabled={running} />
       <div className="end-actions left">
-        <button className="btn" onClick={run} disabled={busy || !keys.anthropic}>
-          {busy ? progress || 'Working…' : 'Diagnose'}
-        </button>
+        {!running ? (
+          <button className="btn" onClick={start} disabled={!keys.anthropic || !Capacitor.isNativePlatform()}>
+            {steps.length ? 'Investigate again' : 'Start investigation'}
+          </button>
+        ) : (
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              cancelled.current = true;
+              pending?.resolve('The owner stopped the investigation.');
+            }}
+          >
+            Stop
+          </button>
+        )}
       </div>
-      {!keys.anthropic && <p className="muted small">Needs an Anthropic key.</p>}
-      {error && <p className="small error-text">{error}</p>}
-      {d && (
-        <div className="diagnosis">
-          <p>
-            <strong>{d.summary}</strong>
-          </p>
-          <ul className="diag-findings">
-            {d.findings.map((f) => (
-              <li key={f.cause}>
-                <span className={`likelihood likelihood-${f.likelihood.split(' ')[0]}`}>{f.likelihood}</span>
-                <strong>{f.cause}</strong>
-                <div className="muted small">{f.evidence}</div>
-              </li>
-            ))}
-          </ul>
-          {d.steps.length > 0 && (
-            <>
-              <h4>Try next</h4>
-              <ol>
-                {d.steps.map((s) => (
-                  <li key={s}>{s}</li>
-                ))}
-              </ol>
-            </>
+      {!Capacitor.isNativePlatform() && <p className="muted small">Only works in the installed app.</p>}
+
+      {steps.length > 0 && (
+        <div className="diag-console" ref={consoleRef}>
+          {steps.map((s, i) => {
+            if (s.kind === 'thought') return <p key={i} className="diag-thought">✦ {s.text}</p>;
+            if (s.kind === 'prompt') return <p key={i} className="diag-prompt">❓ {s.text}</p>;
+            if (s.kind === 'error') return <p key={i} className="small error-text">{s.text}</p>;
+            if (s.kind === 'final')
+              return (
+                <div key={i} className="diag-final">
+                  <h4>Claude’s diagnosis</h4>
+                  <div className="diag-final-text">{s.text}</div>
+                </div>
+              );
+            return (
+              <details key={i} className={`diag-tool${s.error ? ' diag-tool-error' : ''}`}>
+                <summary>
+                  {s.output === undefined ? '⏳' : s.error ? '✗' : '▶'} {TOOL_LABEL[s.name] ?? s.name}
+                  {describeInput(s.name, s.input) && <code> {describeInput(s.name, s.input)}</code>}
+                </summary>
+                {s.output && <pre className="raw">{s.output}</pre>}
+              </details>
+            );
+          })}
+          {running && !pending && (
+            <div className="ask-progress">
+              <div className="spinner small-spinner" /> Claude is working…
+            </div>
           )}
-          {d.needs_from_viewer && <p className="small">{d.needs_from_viewer}</p>}
-          <details>
-            <summary className="small">What Wander collected</summary>
-            <pre className="raw">{JSON.stringify(result.report, null, 1)}</pre>
-          </details>
+        </div>
+      )}
+
+      {pending && (
+        <div className="diag-question">
+          <p>
+            <strong>{pending.question}</strong>
+          </p>
+          <div className="end-actions left">
+            {pending.options.map((o) => (
+              <button key={o} className="btn btn-ghost" onClick={() => reply(o)}>
+                {o}
+              </button>
+            ))}
+          </div>
+          <div className="ask-row">
+            {!tv && (
+              <button
+                className="btn btn-ghost"
+                onClick={async () => {
+                  try {
+                    const said = await listen('Your answer');
+                    if (said) setAnswer(said);
+                  } catch {
+                    /* typing still works */
+                  }
+                }}
+              >
+                🎤
+              </button>
+            )}
+            <form
+              className="ask-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                reply(answer);
+              }}
+            >
+              <input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="…or type your own answer" />
+            </form>
+          </div>
         </div>
       )}
     </section>

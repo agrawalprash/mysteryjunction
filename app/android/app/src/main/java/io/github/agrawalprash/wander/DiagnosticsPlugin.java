@@ -129,6 +129,7 @@ public class DiagnosticsPlugin extends Plugin {
                 if (am != null && Build.VERSION.SDK_INT >= 23) {
                     for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
                         JSObject o = new JSObject();
+                        o.put("id", d.getId());
                         o.put("type", d.getType());
                         o.put("name", String.valueOf(d.getProductName()));
                         inputs.put(o);
@@ -369,5 +370,274 @@ public class DiagnosticsPlugin extends Plugin {
                 finish[0].run();
             }, 15000);
         });
+    }
+
+    // ------------------------------------------------------------ tools for Claude's investigation
+
+    private static final java.util.Set<String> ALLOWED_BINARIES = new java.util.HashSet<>(java.util.Arrays.asList(
+        "getprop", "dumpsys", "pm", "settings", "ls", "cat", "ping", "uname", "id", "df", "uptime", "date", "ip", "logcat"));
+
+    /** Runs one read-only command from an allowlist (no shell, no pipes, no writes). */
+    @PluginMethod
+    public void runCommand(PluginCall call) {
+        String command = call.getString("command", "").trim();
+        new Thread(() -> {
+            JSObject r = new JSObject();
+            r.put("command", command);
+            String problem = validate(command);
+            if (problem != null) {
+                r.put("refused", problem);
+                call.resolve(r);
+                return;
+            }
+            try {
+                String[] args = command.split("\\s+");
+                if (args[0].equals("ping") && !command.contains(" -c ")) {
+                    String[] withCount = new String[args.length + 2];
+                    withCount[0] = "ping"; withCount[1] = "-c"; withCount[2] = "3";
+                    System.arraycopy(args, 1, withCount, 3, args.length - 1);
+                    args = withCount;
+                }
+                if (args[0].equals("logcat")) args = new String[] { "logcat", "-d", "-t", "300" };
+                Process p = new ProcessBuilder(args).redirectErrorStream(false).start();
+                StringBuilder out = new StringBuilder();
+                StringBuilder err = new StringBuilder();
+                Thread to = drain(p.getInputStream(), out);
+                Thread te = drain(p.getErrorStream(), err);
+                boolean finished = p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+                if (!finished) p.destroy();
+                to.join(1000);
+                te.join(1000);
+                r.put("exitCode", finished ? p.exitValue() : -1);
+                r.put("timedOut", !finished);
+                r.put("stdout", cap(out.toString(), 7000));
+                r.put("stderr", cap(err.toString(), 2000));
+            } catch (Exception e) {
+                r.put("error", e.toString());
+            }
+            call.resolve(r);
+        }).start();
+    }
+
+    private static String validate(String command) {
+        if (command.isEmpty()) return "empty command";
+        if (command.matches(".*[;&|><`$\\\\(){}\\n].*")) return "no shell operators allowed (one plain command only)";
+        String[] args = command.split("\\s+");
+        String bin = args[0];
+        if (!ALLOWED_BINARIES.contains(bin)) return "not on the read-only allowlist: " + ALLOWED_BINARIES;
+        if (bin.equals("settings") && (args.length < 2 || !(args[1].equals("get") || args[1].equals("list")))) return "settings: only get/list";
+        if (bin.equals("pm") && (args.length < 2 || !(args[1].equals("list") || args[1].equals("path") || args[1].equals("dump")))) return "pm: only list/path/dump";
+        if (bin.equals("ip") && (args.length < 2 || !(args[1].equals("addr") || args[1].equals("route") || args[1].equals("link")))) return "ip: only addr/route/link";
+        if ((bin.equals("cat") || bin.equals("ls")) && args.length > 1) {
+            String path = args[args.length - 1];
+            if (!(path.startsWith("/proc") || path.startsWith("/sys") || path.startsWith("/system") || path.startsWith("/vendor") || path.startsWith("/product") || path.startsWith("/odm")))
+                return "cat/ls: only /proc, /sys, /system, /vendor, /product, /odm";
+        }
+        return null;
+    }
+
+    private static Thread drain(java.io.InputStream in, StringBuilder sb) {
+        Thread t = new Thread(() -> {
+            try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(in))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (sb.length() < 200000) sb.append(line).append('\n');
+                }
+            } catch (Exception ignored) { }
+        });
+        t.start();
+        return t;
+    }
+
+    private static String cap(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + "\n…[truncated " + (s.length() - max) + " chars]";
+    }
+
+    /** Version, enabled state, and every requested permission with whether it's granted. */
+    @PluginMethod
+    public void packageDetails(PluginCall call) {
+        String pkg = call.getString("package", "");
+        JSObject r = new JSObject();
+        try {
+            PackageManager pm = getContext().getPackageManager();
+            PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS | PackageManager.GET_SERVICES);
+            ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
+            r.put("package", pkg);
+            r.put("label", String.valueOf(pm.getApplicationLabel(ai)));
+            r.put("version", pi.versionName);
+            r.put("enabled", ai.enabled);
+            r.put("system", (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0);
+            r.put("updatedSystemApp", (ai.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0);
+            r.put("lastUpdate", pi.lastUpdateTime);
+            JSArray perms = new JSArray();
+            if (pi.requestedPermissions != null) {
+                for (int i = 0; i < pi.requestedPermissions.length; i++) {
+                    boolean granted = (pi.requestedPermissionsFlags[i] & PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0;
+                    String name = pi.requestedPermissions[i];
+                    if (name.contains("AUDIO") || name.contains("MICROPHONE") || name.contains("BLUETOOTH") || name.contains("INTERNET")
+                        || name.contains("HOTWORD") || name.contains("VOICE") || name.contains("SPEECH") || name.contains("CAPTURE") || !granted) {
+                        perms.put(name.replace("android.permission.", "") + (granted ? " ✓" : " ✗"));
+                    }
+                }
+            }
+            r.put("relevantPermissions", perms);
+            JSArray services = new JSArray();
+            if (pi.services != null) {
+                for (android.content.pm.ServiceInfo si : pi.services) {
+                    String n = si.name.toLowerCase(Locale.ROOT);
+                    if (n.contains("voice") || n.contains("speech") || n.contains("recogn") || n.contains("assist") || n.contains("audio") || n.contains("remote"))
+                        services.put(si.name + (si.enabled ? "" : " (disabled)"));
+                }
+            }
+            r.put("voiceRelatedServices", services);
+            int state = pm.getApplicationEnabledSetting(pkg);
+            r.put("enabledSetting", state);
+        } catch (PackageManager.NameNotFoundException e) {
+            r.put("installed", false);
+        } catch (Exception e) {
+            r.put("error", e.toString());
+        }
+        call.resolve(r);
+    }
+
+    /** Which apps handle an intent action (activities and services). */
+    @PluginMethod
+    public void queryIntent(PluginCall call) {
+        String action = call.getString("action", "");
+        PackageManager pm = getContext().getPackageManager();
+        Intent i = new Intent(action);
+        JSObject r = new JSObject();
+        r.put("action", action);
+        r.put("activities", resolveList(pm.queryIntentActivities(i, PackageManager.MATCH_ALL)));
+        r.put("services", resolveList(pm.queryIntentServices(i, PackageManager.MATCH_ALL)));
+        ResolveInfo def = pm.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY);
+        r.put("defaultActivity", def != null && def.activityInfo != null ? def.activityInfo.packageName + "/" + def.activityInfo.name : null);
+        call.resolve(r);
+    }
+
+    /** Reads one system setting (secure, global or system). */
+    @PluginMethod
+    public void getSetting(PluginCall call) {
+        String table = call.getString("table", "secure");
+        String key = call.getString("key", "");
+        JSObject r = new JSObject();
+        r.put("table", table);
+        r.put("key", key);
+        try {
+            ContentResolver cr = getContext().getContentResolver();
+            String v;
+            if (table.equals("global")) v = Settings.Global.getString(cr, key);
+            else if (table.equals("system")) v = Settings.System.getString(cr, key);
+            else v = Settings.Secure.getString(cr, key);
+            r.put("value", v);
+        } catch (Exception e) {
+            r.put("error", e.toString());
+        }
+        call.resolve(r);
+    }
+
+    /** DNS lookup plus an HTTPS request to any URL. */
+    @PluginMethod
+    public void httpCheck(PluginCall call) {
+        String url = call.getString("url", "");
+        new Thread(() -> {
+            JSObject r = new JSObject();
+            r.put("url", url);
+            try {
+                URL u = new URL(url);
+                JSArray ips = new JSArray();
+                for (InetAddress a : InetAddress.getAllByName(u.getHost())) ips.put(a.getHostAddress());
+                r.put("resolvesTo", ips);
+                long t = System.currentTimeMillis();
+                HttpURLConnection c = (HttpURLConnection) u.openConnection();
+                c.setConnectTimeout(6000);
+                c.setReadTimeout(6000);
+                c.setInstanceFollowRedirects(false);
+                r.put("status", c.getResponseCode());
+                r.put("ms", System.currentTimeMillis() - t);
+                r.put("server", c.getHeaderField("server"));
+                r.put("location", c.getHeaderField("location"));
+                c.disconnect();
+            } catch (Exception e) {
+                r.put("error", e.toString());
+            }
+            call.resolve(r);
+        }).start();
+    }
+
+    /** Records a few seconds from an input and reports loudness over time (needs the mic permission). */
+    @PluginMethod
+    public void audioProbe(PluginCall call) {
+        if (getPermissionState("microphone") != PermissionState.GRANTED) {
+            requestPermissionForAlias("microphone", call, "afterMicForProbe");
+            return;
+        }
+        runAudioProbe(call);
+    }
+
+    @PermissionCallback
+    private void afterMicForProbe(PluginCall call) {
+        if (getPermissionState("microphone") == PermissionState.GRANTED) runAudioProbe(call);
+        else {
+            JSObject r = new JSObject();
+            r.put("error", "Wander was not allowed to use the microphone.");
+            call.resolve(r);
+        }
+    }
+
+    private void runAudioProbe(PluginCall call) {
+        int seconds = Math.max(1, Math.min(call.getInt("seconds", 4), 10));
+        int source = call.getInt("source", android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION);
+        Integer deviceId = call.getInt("deviceId");
+        new Thread(() -> {
+            JSObject r = new JSObject();
+            android.media.AudioRecord rec = null;
+            try {
+                int rate = 16000;
+                int min = android.media.AudioRecord.getMinBufferSize(rate, android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT);
+                rec = new android.media.AudioRecord(source, rate, android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT, Math.max(min, rate));
+                if (rec.getState() != android.media.AudioRecord.STATE_INITIALIZED) {
+                    r.put("error", "AudioRecord could not initialise (no usable input?)");
+                    call.resolve(r);
+                    return;
+                }
+                if (deviceId != null && Build.VERSION.SDK_INT >= 23) {
+                    AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+                    for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_INPUTS)) if (d.getId() == deviceId) rec.setPreferredDevice(d);
+                }
+                rec.startRecording();
+                short[] buf = new short[rate / 4];
+                JSArray levels = new JSArray();
+                double peak = -120;
+                long total = 0;
+                for (int i = 0; i < seconds * 4; i++) {
+                    int n = rec.read(buf, 0, buf.length);
+                    if (n <= 0) { levels.put("read=" + n); continue; }
+                    double sum = 0;
+                    int max = 0;
+                    for (int k = 0; k < n; k++) { sum += (double) buf[k] * buf[k]; max = Math.max(max, Math.abs(buf[k])); }
+                    total += n;
+                    double rmsDb = 20 * Math.log10(Math.sqrt(sum / n) / 32768.0 + 1e-9);
+                    peak = Math.max(peak, 20 * Math.log10(max / 32768.0 + 1e-9));
+                    levels.put(Math.round(rmsDb));
+                }
+                if (Build.VERSION.SDK_INT >= 24 && rec.getRoutedDevice() != null) {
+                    r.put("routedDevice", rec.getRoutedDevice().getProductName() + " (type " + rec.getRoutedDevice().getType() + ")");
+                }
+                r.put("source", source);
+                r.put("samples", total);
+                r.put("rmsDbPerQuarterSecond", levels);
+                r.put("peakDb", Math.round(peak));
+                r.put("note", "-90 dB or lower everywhere means silence / no audio reaching the app.");
+            } catch (Exception e) {
+                r.put("error", e.toString());
+            } finally {
+                if (rec != null) {
+                    try { rec.stop(); } catch (Exception ignored) { }
+                    rec.release();
+                }
+            }
+            call.resolve(r);
+        }).start();
     }
 }
