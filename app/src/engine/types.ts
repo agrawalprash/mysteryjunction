@@ -1,7 +1,7 @@
 // Shared data shapes for the recommendation engine.
 
 /** How far a recommendation is from what the viewer already likes. */
-export type Tier = 'core' | 'adjacent' | 'wildcard' | 'archive' | 'shorts' | 'search';
+export type Tier = 'core' | 'adjacent' | 'wildcard' | 'archive' | 'shorts' | 'search' | 'focus' | 'custom';
 
 export interface Video {
   id: string;
@@ -41,6 +41,8 @@ export interface Candidate extends Video {
   query: string;
   fetchedAt: number;
   facets?: Facets;
+  /** For tier 'custom': which of the viewer's own rows this belongs to. */
+  rowId?: string;
 }
 
 /** One search direction proposed by the planner (Claude or the offline fallback). */
@@ -49,6 +51,14 @@ export interface Direction {
   query: string;
   tier: Tier;
   because: string;
+  rowId?: string;
+}
+
+/** A row the viewer asked for ("add a row for live jazz"). Appears in every set. */
+export interface CustomRow {
+  id: string;
+  title: string;
+  brief: string;
 }
 
 export interface TopicState {
@@ -116,4 +126,6 @@ export interface DailyFeed {
   shorts: Candidate[];
   surprisesUsed: number;
   plannerNote: string;
+  /** What this set centres on, if the viewer asked for something ("music"). */
+  focus?: string;
 }

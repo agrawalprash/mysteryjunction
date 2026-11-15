@@ -1,11 +1,71 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ApiKeys } from '../lib/keys.ts';
-import { getState, maybeRefreshTaste, rebuildToday, resetLearning } from '../lib/wander.ts';
+import { forget, getState, maybeRefreshTaste, resetLearning } from '../lib/wander.ts';
+import { listen, onVoiceKey, voiceAvailable } from '../lib/voice.ts';
+import { UpdateBanner } from './UpdateBanner.tsx';
 import { DAILY_QUOTA, quotaUsed } from '../lib/youtube.ts';
 import { getSettings, LANGUAGES, updateSettings, type Settings as Prefs } from '../lib/settings.ts';
 import { rankTopics } from '../engine/profile.ts';
 
 declare const __APP_VERSION__: string;
+
+/** Finds out whether the remote's mic button and voice input reach Wander. */
+function RemoteTest() {
+  const [keyResult, setKeyResult] = useState('');
+  const [voiceResult, setVoiceResult] = useState('');
+  const [waiting, setWaiting] = useState(false);
+
+  useEffect(() => {
+    if (!waiting) return;
+    const seen = (what: string) => {
+      setKeyResult(what);
+      setWaiting(false);
+    };
+    const stopVoice = onVoiceKey((code) => seen(`✓ The mic button reached Wander (key code ${code}). Pressing it on the home screen will start voice input.`));
+    const onKey = (e: KeyboardEvent) => {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key)) return;
+      seen(`Got a different button: “${e.key}” (code ${e.keyCode}). If that was the mic button, tell Claude this code.`);
+    };
+    window.addEventListener('keydown', onKey, true);
+    const t = window.setTimeout(
+      () => seen('✗ Nothing arrived in 10 seconds. The remote’s mic button is probably taken over by the system (or the remote’s mic isn’t paired). Use the Speak button in Ask Wander instead.'),
+      10_000,
+    );
+    return () => {
+      stopVoice();
+      window.removeEventListener('keydown', onKey, true);
+      clearTimeout(t);
+    };
+  }, [waiting]);
+
+  const testVoice = async () => {
+    setVoiceResult('Listening… say anything.');
+    try {
+      const text = await listen('Say anything to test voice input');
+      setVoiceResult(text ? `✓ Heard: “${text}”` : 'Heard nothing. Try again closer to the mic.');
+    } catch (e) {
+      setVoiceResult(`✗ ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  return (
+    <section className="panel">
+      <h3>Remote and voice test</h3>
+      <p className="muted small">Checks whether your remote’s mic button reaches Wander, and whether this device can turn speech into text.</p>
+      <div className="end-actions left">
+        <button className="btn btn-ghost" disabled={waiting} onClick={() => { setKeyResult(''); setWaiting(true); }}>
+          {waiting ? 'Press the mic button now…' : '1. Test the mic button'}
+        </button>
+        <button className="btn btn-ghost" onClick={testVoice} disabled={!voiceAvailable()}>
+          2. Test voice input
+        </button>
+      </div>
+      {keyResult && <p className="small">{keyResult}</p>}
+      {voiceResult && <p className="small">{voiceResult}</p>}
+      {!voiceAvailable() && <p className="muted small">Voice only works in the installed app.</p>}
+    </section>
+  );
+}
 
 function Bars({ items }: { items: { name: string; score: number; freshness?: number; tag?: string }[] }) {
   const maxAbs = Math.max(0.01, ...items.map((t) => Math.abs(t.score)));
@@ -128,6 +188,34 @@ export function Settings({
       </section>
 
       <section className="panel">
+        <h3>What you’ve told Wander</h3>
+        {st.customRows.length + st.pinned.length + st.rules.length === 0 ? (
+          <p className="muted small">Nothing yet. Use ✦ Ask to add rows (“add a row for live jazz”), lasting interests or rules.</p>
+        ) : (
+          <ul className="told">
+            {st.customRows.map((r) => (
+              <li key={r.id}>
+                <span><span className="tag">row</span> {r.title}</span>
+                <button className="chip" onClick={() => { forget('row', r.id); force((n) => n + 1); }}>Remove</button>
+              </li>
+            ))}
+            {st.pinned.map((p) => (
+              <li key={p}>
+                <span><span className="tag">interest</span> {p}</span>
+                <button className="chip" onClick={() => { forget('interest', p); force((n) => n + 1); }}>Remove</button>
+              </li>
+            ))}
+            {st.rules.map((p) => (
+              <li key={p}>
+                <span><span className="tag">rule</span> {p}</span>
+                <button className="chip" onClick={() => { forget('rule', p); force((n) => n + 1); }}>Remove</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="panel">
         <h3>What Wander has learned</h3>
         <p className="muted small">From what you watch and skip. Bars to the right are interests; to the left, things that didn’t land. Recently binged topics rest for a few days.</p>
         {topics.length === 0 ? <p className="muted">Nothing yet. Watch a few things.</p> : <Bars items={topics} />}
@@ -167,19 +255,18 @@ export function Settings({
         <p>
           YouTube quota used: {quotaUsed().toLocaleString('en-US')} / {DAILY_QUOTA.toLocaleString('en-US')}
         </p>
-        <p className="muted small">Videos watched so far: {st.history.length}. Claude: {keys.anthropic ? 'on' : 'off (no key)'}.</p>
-        <button
-          className="btn btn-ghost"
-          onClick={() => {
-            if (confirm('Throw away today’s feed and build a new one? Uses about a fifth of today’s YouTube quota.')) {
-              rebuildToday();
-              onBack();
-            }
-          }}
-        >
-          Rebuild today’s feed
-        </button>
+        <p className="muted small">
+          Videos watched so far: {st.history.length}. Claude: {keys.anthropic ? 'on' : 'off (no key)'}. Next set {st.prepared ? 'is ready' : 'not prepared yet'}.
+        </p>
       </section>
+
+      <section className="panel">
+        <h3>Updates</h3>
+        <p className="muted small">You have Wander {__APP_VERSION__}.</p>
+        <UpdateBanner force showLatest />
+      </section>
+
+      <RemoteTest />
 
       <section className="panel">
         <h3>Keys</h3>

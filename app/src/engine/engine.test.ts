@@ -175,3 +175,28 @@ test('remote right stays in the row; down goes to the next row, not two rows dow
   assert.ok(directionalScore(cur, nextRowOffset, 'ArrowDown')! < directionalScore(cur, twoRowsDownAligned, 'ArrowDown')!);
   assert.equal(directionalScore(cur, rect(100, -300), 'ArrowDown'), null);
 });
+
+// ---------------------------------------------------------------- asking for things
+
+import { codeFromTag } from '../lib/updater.ts';
+
+test('a focus request gets its own row at the top, and custom rows appear by name', () => {
+  const pool = [
+    ...Array.from({ length: 10 }, (_, i) => cand('focus', `music ${i}`)),
+    ...Array.from({ length: 10 }, (_, i) => cand('core', `c${i}`)),
+    ...Array.from({ length: 6 }, (_, i) => cand('custom', `jazz ${i}`, { rowId: 'r1' })),
+    ...Array.from({ length: 10 }, (_, i) => cand('wildcard', `w${i}`)),
+  ];
+  const feed = assembleFeed(pool, ctx(), '2026-11-15', { focus: 'music', customRows: [{ id: 'r1', title: 'Live jazz', brief: 'Live jazz sessions' }] });
+  assert.equal(feed.rows[0].id, 'focus');
+  assert.equal(feed.rows[0].subtitle, 'music');
+  assert.ok(feed.rows[0].items.every((i) => i.tier === 'focus'));
+  const jazz = feed.rows.find((r) => r.title === 'Live jazz');
+  assert.ok(jazz && jazz.items.length === 5 && jazz.items.every((i) => i.rowId === 'r1'));
+});
+
+test('update check reads the build number from release tags', () => {
+  assert.equal(codeFromTag('v0.1.7'), 7);
+  assert.equal(codeFromTag('v0.1.123'), 123);
+  assert.equal(codeFromTag('nonsense'), 0);
+});

@@ -14,6 +14,8 @@ const TIER_EXPLAIN: Record<Candidate['tier'], string> = {
   archive: 'An older video, picked because good things don’t expire.',
   shorts: 'A short, light pick.',
   search: 'From something you searched for.',
+  focus: 'Part of what you asked Wander for.',
+  custom: 'From one of the rows you asked Wander to add.',
 };
 
 const PLAYER_ERRORS: Record<number, string> = {

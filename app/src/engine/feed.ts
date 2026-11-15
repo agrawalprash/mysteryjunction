@@ -1,6 +1,6 @@
 // Turns a pool of candidate videos into today's finite, varied home feed.
 
-import type { Candidate, DailyFeed, FeedRow, Video, WatchRecord } from './types.ts';
+import type { Candidate, CustomRow, DailyFeed, FeedRow, Video, WatchRecord } from './types.ts';
 import {
   coreInterests,
   facetBoost,
@@ -157,7 +157,14 @@ function historyToCandidate(w: WatchRecord): Candidate {
   };
 }
 
-export function assembleFeed(pool: Candidate[], ctx: FeedContext, date: string, plannerNote = ''): DailyFeed {
+export interface FeedOptions {
+  note?: string;
+  /** What the viewer asked for; gets its own row at the top. */
+  focus?: string;
+  customRows?: CustomRow[];
+}
+
+export function assembleFeed(pool: Candidate[], ctx: FeedContext, date: string, opts: FeedOptions = {}): DailyFeed {
   const used = newUsed();
   const score = makeScorer(ctx);
   const main = pool.filter((c) => c.tier !== 'shorts' && eligible(c, ctx));
@@ -169,14 +176,31 @@ export function assembleFeed(pool: Candidate[], ctx: FeedContext, date: string, 
     if (row.items.length > 0) rows.push(row);
   };
 
+  if (opts.focus) {
+    addRow({
+      id: 'focus',
+      title: 'Because you asked',
+      subtitle: opts.focus,
+      items: pick(byTier('focus'), 8, used, score, { channelCap: 1, topicCap: 4 }),
+    });
+  }
+
   addRow({
     id: 'core',
     title: coldStart ? 'A taste of everything' : 'Picked for you',
     subtitle: coldStart
       ? 'Sampling widely while Wander learns what you like'
       : 'More of what you enjoy, from corners you haven’t seen',
-    items: pick(byTier('core'), 8, used, score),
+    items: pick(byTier('core'), opts.focus ? 6 : 8, used, score),
   });
+  for (const row of opts.customRows ?? []) {
+    addRow({
+      id: `custom-${row.id}`,
+      title: row.title,
+      subtitle: row.brief,
+      items: pick(main.filter((c) => c.tier === 'custom' && c.rowId === row.id), 5, used, score, { channelCap: 1, topicCap: 5 }),
+    });
+  }
   addRow({
     id: 'adjacent',
     title: 'Next door',
@@ -217,7 +241,7 @@ export function assembleFeed(pool: Candidate[], ctx: FeedContext, date: string, 
   const shortsPool = pool.filter((c) => c.tier === 'shorts' && eligible(c, ctx, true));
   const shorts = pick(shortsPool, 10, used, score, { channelCap: 1, topicCap: 3 });
 
-  return { date, generatedAt: ctx.now, rows, shorts, surprisesUsed: 0, plannerNote };
+  return { date, generatedAt: ctx.now, rows, shorts, surprisesUsed: 0, plannerNote: opts.note ?? '', focus: opts.focus };
 }
 
 /** A small extra row of wildcards on request, capped per day by the caller. */

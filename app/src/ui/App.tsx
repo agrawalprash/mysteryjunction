@@ -5,6 +5,7 @@ import { loadKeys, type ApiKeys } from '../lib/keys.ts';
 import { detectTv } from '../lib/device.ts';
 import { getSettings } from '../lib/settings.ts';
 import { enableSpatialNav, focusFirst } from '../lib/spatialNav.ts';
+import { closeOverlay } from '../lib/overlay.ts';
 import { Setup } from './Setup.tsx';
 import { Home } from './Home.tsx';
 import { Player } from './Player.tsx';
@@ -54,6 +55,7 @@ export function App() {
   // Android back button (and the remote's Back) walks back through screens, then leaves the app.
   useEffect(() => {
     const handle = CapApp.addListener('backButton', () => {
+      if (closeOverlay()) return;
       if (stackRef.current.length > 1) back();
       else CapApp.minimizeApp();
     });

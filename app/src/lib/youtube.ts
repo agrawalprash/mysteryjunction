@@ -7,7 +7,9 @@ import { load, localDate, save } from './store.ts';
 const API = 'https://www.googleapis.com/youtube/v3';
 export const DAILY_QUOTA = 10_000;
 /** Stop spending on automatic searches past this point so manual search keeps working. */
-export const AUTO_BUDGET = 7_500;
+export const AUTO_BUDGET = 9_200;
+/** Roughly what one full set costs in YouTube quota (searches + lookups). */
+export const SET_COST = 2_900;
 
 interface QuotaState {
   date: string;
@@ -132,7 +134,7 @@ export async function fetchDirection(d: Direction, key: string, language?: strin
   const ids = await searchIds(d.query, key, opts);
   const videos = await videoDetails(ids, key);
   const now = Date.now();
-  return videos.map((v) => ({ ...v, topic: d.topic, tier: d.tier, because: d.because, query: d.query, fetchedAt: now }));
+  return videos.map((v) => ({ ...v, topic: d.topic, tier: d.tier, because: d.because, query: d.query, fetchedAt: now, rowId: d.rowId }));
 }
 
 /** Cheap call (1 unit) to check a key works. */

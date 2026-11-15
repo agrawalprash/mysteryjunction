@@ -13,6 +13,9 @@ An Android app for watching YouTube with a recommendation feed built for variety
   - describes each candidate video (subject, format, pace, depth, clickbait), so the app learns which *kinds* of video you like and keeps formats varied,
   - writes a weekly taste profile from your full history (visible in Settings).
   Without a key, a built-in topic list is used. Organization-wide keys also need a workspace ID.
+- **New sets on demand.** Besides the daily set, "New set" makes another (YouTube's free quota allows about three a day). The next set is prepared in the background, so it usually appears instantly.
+- **Ask Wander.** Speak or type: a mood for now ("music today"), a lasting row ("add a row for live jazz"), an interest to remember, or a rule ("no true crime"). Claude applies it; everything remembered is listed in Settings and can be removed.
+- **In-app updates.** The app checks this repo's latest release and installs it with one tap (Android asks once for permission, then confirms each install).
 - **TV mode.** On Android TV the app shows up on the home screen, uses a larger layout, and works with the remote (arrows move, OK opens; in the player OK pauses, left/right skip 10 seconds, down shows details). Can be forced on or off in Settings.
 
 Code map: `src/engine/` (interest model and feed assembly, unit tested), `src/lib/` (YouTube, Claude, storage), `src/ui/` (screens), `android/` (Capacitor project, incl. fullscreen video support in `MainActivity.java`).
