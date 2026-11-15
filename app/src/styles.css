@@ -295,3 +295,25 @@ body.tv .row-scroll { scroll-snap-type: none; }
 body.tv .card { scroll-margin: 150px 60px 70px 60px; }
 body.tv .card:focus { transform: scale(1.03); }
 body.tv .chip, body.tv .btn { scroll-margin: 120px 60px 70px 60px; }
+.target-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; }
+.chip-on { background: var(--text); color: #0f0f0f; }
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40;
+  max-width: min(92vw, 900px); padding: 12px 20px; border-radius: 14px; background: rgba(30, 30, 30, 0.96);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: 15px;
+}
+body.tv .toast { font-size: 24px; bottom: 48px; }
+.diag-findings { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.diag-findings li { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; font-size: 14px; }
+.likelihood { font-size: 11px; padding: 1px 6px; border-radius: 4px; margin-right: 6px; background: #333; }
+.likelihood-high { background: #5a2a2a; color: #ffd0d0; }
+.likelihood-medium { background: #4a3d1e; color: #ffe2a8; }
+.likelihood-ruled { background: #233b2c; color: #bfe8cc; }
+.panel textarea {
+  width: 100%; min-height: 110px; padding: 10px; border-radius: 10px; border: 1px solid #333;
+  background: #121212; color: var(--text); font: inherit; font-size: 14px;
+}
+.code-big { font-size: 34px; font-weight: 700; letter-spacing: 6px; margin: 4px 0; }
+body.tv .code-big { font-size: 56px; }
+.raw { max-height: 300px; overflow: auto; font-size: 11px; background: #111; padding: 8px; border-radius: 8px; white-space: pre-wrap; }
+.code-input { width: 9em; padding: 10px 12px; border-radius: 10px; border: 1px solid #333; background: #121212; color: var(--text); font-size: 18px; letter-spacing: 3px; }

@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DailyFeed } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
-import { ask } from '../lib/wander.ts';
+import { ask, getTold, mergeTold } from '../lib/wander.ts';
 import { listen } from '../lib/voice.ts';
+import { linkedTv, sendToTv } from '../lib/link.ts';
+import { toast } from '../lib/toast.ts';
+import { focusFirst } from '../lib/spatialNav.ts';
 import { useTv } from './App.tsx';
 
 const SUGGESTIONS = [
@@ -34,26 +37,57 @@ export function AskSheet({
   const [changes, setChanges] = useState<string[]>([]);
   const [error, setError] = useState('');
   const started = useRef(false);
+  const open = useRef(true);
+  const tvLink = !tv ? linkedTv() : null;
+  const [target, setTarget] = useState<'here' | 'tv'>(tvLink ? 'tv' : 'here');
+
+  useEffect(() => {
+    // On TV, move focus into the panel so the remote controls it.
+    if (tv) window.setTimeout(() => focusFirst(), 30);
+    return () => {
+      open.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submit = async (said: string) => {
     const t = said.trim();
     if (!t || busy) return;
     setBusy(true);
+    // On TV the focused control may become disabled; keep focus somewhere usable.
+    if (tv) window.setTimeout(() => document.querySelector<HTMLElement>('[data-close]')?.focus(), 30);
     setError('');
     setReply('');
     setChanges([]);
     setHeard(t);
     try {
+      if (target === 'tv') {
+        setProgress('Sending to the TV… (Claude replies there too)');
+        const out = await sendToTv({ type: 'ask', text: t });
+        setReply(out.reply ?? 'Sent.');
+        if (out.notice) setError(out.notice);
+        setChanges([...(out.changes ?? []), ...(out.newSet ? ['The TV is showing a new set'] : [])]);
+        // Keep rows, interests and rules the same on both devices.
+        const synced = await sendToTv({ type: 'sync', told: getTold() }).catch(() => null);
+        if (synced?.told) mergeTold(synced.told);
+        if (!open.current) toast(`📺 ${out.reply ?? 'Sent to the TV.'}`);
+        return;
+      }
       const out = await ask(keys, t, setProgress);
       setReply(out.reply);
       setChanges(out.changes);
+      if (out.notice) setError(out.notice);
       if (out.feed) {
         onFeed(out.feed);
         // The new set is ready: get out of the way so it can be seen.
-        window.setTimeout(onClose, out.changes.length ? 2200 : 1200);
+        if (open.current) window.setTimeout(onClose, out.changes.length ? 2200 : 1200);
       }
+      // Closed while Claude was thinking: tell them how it went.
+      if (!open.current) toast(`✦ ${out.reply}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      if (!open.current) toast(`Couldn’t do that: ${msg}`);
     } finally {
       setBusy(false);
       setProgress('');
@@ -89,6 +123,18 @@ export function AskSheet({
           Ask for a mood (“music today”), a new set, a lasting row (“add a row for live jazz”), something to remember (“I love maritime history”), or
           a rule (“no true crime”).
         </p>
+
+        {tvLink && (
+          <div className="target-row">
+            <span className="muted small">Send to</span>
+            <button className={`chip${target === 'here' ? ' chip-on' : ''}`} onClick={() => setTarget('here')} disabled={busy}>
+              This phone
+            </button>
+            <button className={`chip${target === 'tv' ? ' chip-on' : ''}`} onClick={() => setTarget('tv')} disabled={busy}>
+              📺 TV
+            </button>
+          </div>
+        )}
 
         <div className="ask-row">
           <button className="btn mic-btn" onClick={speak} disabled={busy} data-autofocus>
@@ -132,8 +178,8 @@ export function AskSheet({
         {error && <div className="error-box"><p>{error}</p></div>}
 
         <div className="setup-actions">
-          <button className="btn btn-ghost" onClick={onClose}>
-            {reply ? 'Done' : 'Close'}
+          <button className="btn btn-ghost" onClick={onClose} data-close>
+            {reply ? 'Done' : busy ? 'Close (keeps working)' : 'Close'}
           </button>
         </div>
       </div>

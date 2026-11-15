@@ -372,3 +372,44 @@ export async function askWander(auth: ClaudeAuth, ctx: AskContext): Promise<AskR
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude didn’t answer that one. Try saying it differently.');
   return res.parsed_output;
 }
+
+// ---------------------------------------------------------------- device diagnosis
+
+const Diagnosis = z.object({
+  summary: z.string().describe('One or two plain sentences: what is most likely wrong.'),
+  findings: z.array(
+    z.object({
+      cause: z.string(),
+      likelihood: z.enum(['high', 'medium', 'low', 'ruled out']),
+      evidence: z.string().describe('Which facts in the report point to this (quote values).'),
+    }),
+  ),
+  steps: z.array(z.string()).describe('What the viewer should try next, in order, as exact menu paths for this device. Short.'),
+  needs_from_viewer: z.string().describe('Any test only the viewer can do, or empty.'),
+});
+export type DiagnosisResult = z.infer<typeof Diagnosis>;
+
+export async function diagnoseDevice(auth: ClaudeAuth, report: unknown, symptoms: string): Promise<DiagnosisResult> {
+  const res = await client(auth).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 16000,
+    ...FALLBACK,
+    output_config: { effort: 'high', format: betaZodOutputFormat(Diagnosis) },
+    system: `You are diagnosing an Android TV / Android device for its owner, from a read-only report the Wander app collected on the device, plus the owner's description of the problem.
+Reason like a careful technician: separate what the report proves from what it only suggests, rule causes in or out with specific values from the report, and say plainly when something can't be determined from here.
+Background you can rely on:
+- Voice on Android TV: the remote's mic streams audio over Bluetooth only while the Assistant/mic button is held; the Google TV phone app sends audio to the TV's own voice service. If both fail the same way, the shared parts are the TV's voice/recognition service, its settings, the account/language, and the network path to Google.
+- Android TV devices usually have no built-in mic, so an app-level speech test on a TV may fail with ERROR_AUDIO or similar even when the remote is fine; interpret that carefully.
+- A host resolving to 0.0.0.0, 127.x, or a private address, or a DNS error for Google hosts, points to DNS filtering (Pi-hole, AdGuard, router parental controls).
+- Common voice recogniser packages: com.google.android.katniss (Google app for Android TV), com.google.android.googlequicksearchbox, com.google.android.tts.
+Write for a non-technical owner. Menu paths should match Android TV's English settings menus.`,
+    messages: [
+      {
+        role: 'user',
+        content: `What the owner says:\n${symptoms}\n\nDevice report (JSON):\n${JSON.stringify(report, null, 1)}`,
+      },
+    ],
+  });
+  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude couldn’t produce a diagnosis this time.');
+  return res.parsed_output;
+}

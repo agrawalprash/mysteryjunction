@@ -3,6 +3,7 @@ import { claudeAuth, saveKeys, type ApiKeys } from '../lib/keys.ts';
 import { testKey as testYouTube } from '../lib/youtube.ts';
 import { testKey as testClaude } from '../lib/claude.ts';
 import { useTv } from './App.tsx';
+import { pairingCode } from '../lib/link.ts';
 
 export function Setup({
   initial,
@@ -65,6 +66,13 @@ export function Setup({
         YouTube, with a feed that keeps surprising you. One-time setup: paste your keys. They’re saved in this device’s encrypted storage and only
         used to talk to YouTube and Anthropic.
       </p>
+      {tv && (
+        <div className="tip">
+          <strong>Easiest: send the keys from your phone.</strong> Open Wander on your phone (same Wi-Fi) → Settings → Link to TV, enter this code,
+          then tap “Send my API keys to the TV”:
+          <div className="code-big">{pairingCode()}</div>
+        </div>
+      )}
       {tv && (
         <p className="tip">
           Typing keys with a remote is slow. Easier: open the Google TV app on your phone, connect it to this TV, select a field here, then tap the

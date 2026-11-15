@@ -3,6 +3,9 @@ import type { ApiKeys } from '../lib/keys.ts';
 import { forget, getState, maybeRefreshTaste, resetLearning } from '../lib/wander.ts';
 import { listen, onVoiceKey, voiceAvailable } from '../lib/voice.ts';
 import { UpdateBanner } from './UpdateBanner.tsx';
+import { DiagnosePanel } from './DiagnosePanel.tsx';
+import { PhoneLinkPanel, TvLinkPanel } from './LinkPanel.tsx';
+import { useTv } from './App.tsx';
 import { DAILY_QUOTA, quotaUsed } from '../lib/youtube.ts';
 import { getSettings, LANGUAGES, updateSettings, type Settings as Prefs } from '../lib/settings.ts';
 import { rankTopics } from '../engine/profile.ts';
@@ -104,6 +107,7 @@ export function Settings({
   deviceIsTv: boolean;
 }) {
   const [, force] = useState(0);
+  const tv = useTv();
   const [prefs, setPrefs] = useState(getSettings());
   const [tasteBusy, setTasteBusy] = useState(false);
   const [tasteError, setTasteError] = useState('');
@@ -215,6 +219,8 @@ export function Settings({
         )}
       </section>
 
+      {tv ? <TvLinkPanel /> : <PhoneLinkPanel keys={keys} />}
+
       <section className="panel">
         <h3>What Wander has learned</h3>
         <p className="muted small">From what you watch and skip. Bars to the right are interests; to the left, things that didn’t land. Recently binged topics rest for a few days.</p>
@@ -265,6 +271,8 @@ export function Settings({
         <p className="muted small">You have Wander {__APP_VERSION__}.</p>
         <UpdateBanner force showLatest />
       </section>
+
+      <DiagnosePanel keys={keys} />
 
       <RemoteTest />
 
