@@ -323,3 +323,16 @@ body.tv .code-big { font-size: 3.5rem; }
 .raw { max-height: 300px; overflow: auto; font-size: 11px; background: #111; padding: 8px; border-radius: 8px; white-space: pre-wrap; }
 .code-input { width: 9em; padding: 10px 12px; border-radius: 10px; border: 1px solid #333; background: #121212; color: var(--text); font-size: 18px; letter-spacing: 3px; }
 body.tv .topbar { background: var(--bg); }
+.search-target { margin: 4px 16px 0; } body.tv .search-target { margin-left: 0; } .mic-icon { font-size: 20px; }
+.feedback-text {
+  width: 100%; min-height: 90px; padding: 10px 12px; border-radius: 12px; border: 1px solid #3a3a3a;
+  background: #121212; color: var(--text); font: inherit; font-size: 16px; margin: 4px 0 8px;
+}
+.thread-title { font-size: 15px; margin: 16px 0 6px; }
+.thread { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.thread li { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; }
+.thread li.from-claude { border-left: 3px solid var(--brand); }
+.thread p { margin: 4px 0 0; white-space: pre-line; font-size: 14px; }
+body.tv .feedback-text { font-size: 1.375rem; }
+body.tv .thread p { font-size: 1.125rem; }
+.token-input { width: 16em; letter-spacing: 0; font-size: 14px; }

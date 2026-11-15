@@ -9,13 +9,14 @@ export const DAILY_QUOTA = 10_000;
 /** Stop spending on automatic searches past this point so manual search keeps working. */
 export const AUTO_BUDGET = 9_200;
 /** Roughly what one full set costs in YouTube quota (searches + lookups). */
-export const SET_COST = 2_900;
+export const SET_COST = 1_200;
 
 interface QuotaState {
   date: string;
   used: number;
 }
 
+/** Quota units spent on YouTube calls so far today (tracked locally). */
 export function quotaUsed(): number {
   const q = load<QuotaState>('quota', { date: localDate(), used: 0 });
   return q.date === localDate() ? q.used : 0;
@@ -65,15 +66,53 @@ export interface SearchOptions {
   language?: string;
 }
 
-/** Search for video IDs only (100 units). */
+// ---------------------------------------------------------------- caches
+// Searches are the expensive call (100 units). The same search within a few days
+// is served from here; channel lookups (1 unit) are remembered too.
+
+interface Cached<T> {
+  at: number;
+  value: T;
+}
+const SEARCH_TTL = 3 * 24 * 60 * 60 * 1000;
+const UPLOADS_TTL = 24 * 60 * 60 * 1000;
+const CHANNEL_TTL = 30 * 24 * 60 * 60 * 1000;
+
+function cacheGet<T>(name: string, k: string, ttl: number): T | undefined {
+  const all = load<Record<string, Cached<T>>>(name, {});
+  const hit = all[k];
+  return hit && Date.now() - hit.at < ttl ? hit.value : undefined;
+}
+
+function cachePut<T>(name: string, k: string, value: T, max = 300) {
+  const all = load<Record<string, Cached<T>>>(name, {});
+  all[k] = { at: Date.now(), value };
+  const keys = Object.keys(all);
+  if (keys.length > max) {
+    keys.sort((a, b) => all[a].at - all[b].at).slice(0, keys.length - max).forEach((x) => delete all[x]);
+  }
+  save(name, all);
+}
+
+/** Search for video IDs (100 units, or free if the same search ran in the last few days). */
 export async function searchIds(q: string, key: string, opts: SearchOptions = {}): Promise<string[]> {
+  const cacheKey = JSON.stringify([q.trim().toLowerCase(), opts]);
+  const cached = cacheGet<string[]>('cache-search', cacheKey, SEARCH_TTL);
+  if (cached) return cached;
+  const ids = await searchIdsUncached(q, key, opts);
+  cachePut('cache-search', cacheKey, ids);
+  return ids;
+}
+
+async function searchIdsUncached(q: string, key: string, opts: SearchOptions): Promise<string[]> {
   const body = await call(
     'search',
     {
       part: 'snippet',
       type: 'video',
       q,
-      maxResults: opts.maxResults ?? 15,
+      // Same price for 50 results as for 5: take plenty, leftovers feed later sets.
+      maxResults: opts.maxResults ?? 40,
       videoEmbeddable: 'true',
       safeSearch: 'moderate',
       videoDuration: opts.duration ?? 'any',
@@ -117,7 +156,51 @@ export async function videoDetails(ids: string[], key: string): Promise<Video[]>
   return out;
 }
 
-/** Run one planner direction: search, then attach details and provenance. */
+/** A channel's uploads playlist from its handle (1 unit, then cached for a month). */
+async function uploadsPlaylist(handle: string, key: string): Promise<string | null> {
+  const h = handle.trim().startsWith('@') ? handle.trim() : `@${handle.trim()}`;
+  const cached = cacheGet<string | null>('cache-channel', h.toLowerCase(), CHANNEL_TTL);
+  if (cached !== undefined) return cached;
+  const body = await call('channels', { part: 'contentDetails', forHandle: h }, key, 1);
+  const id: string | null = body.items?.[0]?.contentDetails?.relatedPlaylists?.uploads ?? null;
+  cachePut('cache-channel', h.toLowerCase(), id, 500);
+  return id;
+}
+
+/** Up to 50 recent uploads from a playlist (1 unit, cached for a day). */
+async function recentUploads(playlistId: string, key: string): Promise<string[]> {
+  const cached = cacheGet<string[]>('cache-uploads', playlistId, UPLOADS_TTL);
+  if (cached) return cached;
+  const body = await call('playlistItems', { part: 'contentDetails', playlistId, maxResults: 50 }, key, 1);
+  const ids: string[] = (body.items ?? []).map((i: { contentDetails?: { videoId?: string } }) => i.contentDetails?.videoId).filter(Boolean);
+  cachePut('cache-uploads', playlistId, ids, 300);
+  return ids;
+}
+
+function sample<T>(items: T[], n: number): T[] {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, n);
+}
+
+/** Video IDs from the channels Claude named (a few units instead of a 100-unit search). */
+async function idsFromChannels(handles: string[], key: string): Promise<string[]> {
+  const ids: string[] = [];
+  for (const h of handles.slice(0, 3)) {
+    try {
+      const playlist = await uploadsPlaylist(h, key);
+      if (playlist) ids.push(...sample(await recentUploads(playlist, key), 10));
+    } catch (e) {
+      if (e instanceof YouTubeError && e.status === 403) throw e; // quota/key problems: stop
+    }
+  }
+  return ids;
+}
+
+/** Run one planner direction: channels first (cheap), search to fill in; then details and provenance. */
 export async function fetchDirection(d: Direction, key: string, language?: string): Promise<Candidate[]> {
   const opts: SearchOptions = { language };
   if (d.tier === 'shorts') {
@@ -131,8 +214,10 @@ export async function fetchDirection(d: Direction, key: string, language?: strin
     const r = Math.random();
     opts.duration = r < 0.45 ? 'medium' : r < 0.8 ? 'long' : 'any';
   }
-  const ids = await searchIds(d.query, key, opts);
-  const videos = await videoDetails(ids, key);
+  // Archive needs a date filter, which only search has.
+  const ids = d.channels?.length && d.tier !== 'archive' ? await idsFromChannels(d.channels, key) : [];
+  if (ids.length < 6) ids.push(...(await searchIds(d.query, key, opts)));
+  const videos = await videoDetails([...new Set(ids)], key);
   const now = Date.now();
   return videos.map((v) => ({ ...v, topic: d.topic, tier: d.tier, because: d.because, query: d.query, fetchedAt: now, rowId: d.rowId }));
 }

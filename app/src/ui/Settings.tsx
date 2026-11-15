@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { ApiKeys } from '../lib/keys.ts';
-import { forget, getState, maybeRefreshTaste, resetLearning } from '../lib/wander.ts';
+import { forget, getState, maybeRefreshTaste, resetLearning, setCost, setsLeftToday } from '../lib/wander.ts';
 import { listen, onVoiceKey, voiceAvailable } from '../lib/voice.ts';
 import { UpdateBanner } from './UpdateBanner.tsx';
 import { DiagnosePanel } from './DiagnosePanel.tsx';
 import { PhoneLinkPanel, TvLinkPanel } from './LinkPanel.tsx';
+import { FeedbackPanel } from './FeedbackPanel.tsx';
+import { FeedbackSheet } from './FeedbackSheet.tsx';
+import { setOverlayCloser } from '../lib/overlay.ts';
 import { useTv } from './App.tsx';
 import { DAILY_QUOTA, quotaUsed } from '../lib/youtube.ts';
 import { getSettings, LANGUAGES, updateSettings, type Settings as Prefs } from '../lib/settings.ts';
@@ -99,13 +102,16 @@ export function Settings({
   editKeys,
   onTvModeChange,
   deviceIsTv,
+  onKeys,
 }: {
   keys: ApiKeys;
   onBack: () => void;
   editKeys: () => void;
   onTvModeChange: (m: Prefs['tvMode']) => void;
   deviceIsTv: boolean;
+  onKeys: (k: ApiKeys) => void;
 }) {
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [, force] = useState(0);
   const tv = useTv();
   const [prefs, setPrefs] = useState(getSettings());
@@ -221,6 +227,15 @@ export function Settings({
 
       {tv ? <TvLinkPanel /> : <PhoneLinkPanel keys={keys} />}
 
+      <FeedbackPanel
+        keys={keys}
+        onKeys={onKeys}
+        openFeedback={() => {
+          setFeedbackOpen(true);
+          setOverlayCloser(() => setFeedbackOpen(false));
+        }}
+      />
+
       <section className="panel">
         <h3>What Wander has learned</h3>
         <p className="muted small">From what you watch and skip. Bars to the right are interests; to the left, things that didn’t land. Recently binged topics rest for a few days.</p>
@@ -262,6 +277,10 @@ export function Settings({
           YouTube quota used: {quotaUsed().toLocaleString('en-US')} / {DAILY_QUOTA.toLocaleString('en-US')}
         </p>
         <p className="muted small">
+          A set costs about {setCost().toLocaleString('en-US')} units lately, so about {setsLeftToday()} more today. Repeat searches and channel lookups
+          are cached, so they’re free for a few days.
+        </p>
+        <p className="muted small">
           Videos watched so far: {st.history.length}. Claude: {keys.anthropic ? 'on' : 'off (no key)'}. Next set {st.prepared ? 'is ready' : 'not prepared yet'}.
         </p>
       </section>
@@ -300,6 +319,15 @@ export function Settings({
       </section>
 
       <p className="muted small version">Wander {__APP_VERSION__}</p>
+      {feedbackOpen && (
+        <FeedbackSheet
+          keys={keys}
+          onClose={() => {
+            setFeedbackOpen(false);
+            setOverlayCloser(null);
+          }}
+        />
+      )}
     </div>
   );
 }

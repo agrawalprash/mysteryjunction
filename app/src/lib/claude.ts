@@ -41,6 +41,9 @@ const Item = z.object({
   topic: z.string().describe('Short topic name, 1–5 words. Reuse an existing interest name exactly when it is the same topic.'),
   query: z.string().describe('The YouTube search query to run.'),
   because: z.string().describe('Shown to the viewer under the video. Max 8 words, e.g. "Next door to woodworking".'),
+  channels: z
+    .array(z.string())
+    .describe('1–3 YouTube channel handles (like "@SmarterEveryDay") that reliably make excellent videos for this direction. Only handles you are confident exist. Empty if unsure.'),
 });
 
 const Plan = z.object({
@@ -92,7 +95,8 @@ Principles:
 - "because" is shown to the viewer. Keep it under 8 words, warm and specific.
 - The viewer's own instructions win: always follow their standing rules, always cover some of their pinned long-term interests in core, and fill each of their custom rows with directions that fit its brief.
 - When the viewer asked for something right now (focus), the focus directions are the heart of this set: still personalised to their taste, varied within the request, with one or two surprising takes. Other tiers stay as usual but may lean toward it where natural.
-- Write every query, topic and "because" in the viewer's language.`;
+- Write every query, topic and "because" in the viewer's language.
+- YouTube searches are expensive for the app (strict daily quota); reading a channel's uploads is nearly free. So for most directions also name 1–3 channels you are confident exist and that make great videos on that subject; favour lesser-known excellent channels over the biggest names, and vary them between directions. The app falls back to the search query if a channel isn't found. For wildcards, name channels only when you're sure; a search finds new creators better.`;
 
 function describeViewer(input: PlannerInput): string {
   const lines: string[] = [];
@@ -137,7 +141,13 @@ function toDirections(items: z.infer<typeof Item>[], tier: Direction['tier'], ma
   return items
     .filter((i) => i.topic.trim() && i.query.trim())
     .slice(0, max)
-    .map((i) => ({ topic: i.topic.trim(), query: i.query.trim(), because: i.because.trim(), tier }));
+    .map((i) => ({
+      topic: i.topic.trim(),
+      query: i.query.trim(),
+      because: i.because.trim(),
+      tier,
+      channels: (i.channels ?? []).map((c) => c.trim()).filter((c) => /^@?[\w.-]{3,}$/.test(c)).slice(0, 3),
+    }));
 }
 
 /** How many searches of each kind one set uses (100 YouTube quota units each). */

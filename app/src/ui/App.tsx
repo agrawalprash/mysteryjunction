@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import type { Candidate } from '../engine/types.ts';
 import { loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
 import { startLinkServer, type LinkMessage } from '../lib/link.ts';
-import { ask, getTold, mergeTold, newSet } from '../lib/wander.ts';
+import { ask, getTold, mergeTold, newSet, search } from '../lib/wander.ts';
 import { onToast, toast } from '../lib/toast.ts';
 import { detectTv } from '../lib/device.ts';
 import { getSettings } from '../lib/settings.ts';
@@ -12,8 +12,9 @@ import { closeOverlay } from '../lib/overlay.ts';
 import { Setup } from './Setup.tsx';
 import { Home } from './Home.tsx';
 import { Player } from './Player.tsx';
-import { Search } from './Search.tsx';
+import { preloadSearch, Search } from './Search.tsx';
 import { Settings } from './Settings.tsx';
+import { UpdatePopup } from './UpdatePopup.tsx';
 
 export type Screen =
   | { kind: 'home' }
@@ -38,6 +39,7 @@ export function App() {
   const keysRef = useRef(keys);
   keysRef.current = keys;
   const [notice, setNotice] = useState('');
+  const [searchVersion, setSearchVersion] = useState(0);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -61,7 +63,7 @@ export function App() {
         case 'hello':
           return { ok: true, name: 'Wander TV' };
         case 'keys': {
-          const next = { youtube: msg.youtube, anthropic: msg.anthropic, anthropicWorkspace: msg.anthropicWorkspace };
+          const next = { youtube: msg.youtube, anthropic: msg.anthropic, anthropicWorkspace: msg.anthropicWorkspace, github: msg.github ?? keysRef.current?.github };
           await saveKeys(next);
           setKeys(next);
           toast('📱 Your phone sent the API keys.');
@@ -74,6 +76,15 @@ export function App() {
           toast('📱 Your phone asked for a new set…');
           await newSet(k, '', () => undefined);
           return { ok: true };
+        case 'search': {
+          if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
+          toast(`📱 Searching for “${msg.q}”…`);
+          const results = await search(msg.q, k);
+          preloadSearch(msg.q, results);
+          setSearchVersion((n) => n + 1);
+          setStack((st) => (st[st.length - 1].kind === 'search' ? st : [...st, { kind: 'search' }]));
+          return { count: results.length };
+        }
         case 'ask': {
           if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
           toast(`📱 “${msg.text}”`);
@@ -157,9 +168,18 @@ export function App() {
         {current.kind === 'player' && (
           <Player key={current.video.id} video={current.video} onBack={back} open={(v) => replace({ kind: 'player', video: v })} />
         )}
-        {current.kind === 'search' && <Search keys={keys} onBack={back} open={(v) => push({ kind: 'player', video: v })} />}
+        {current.kind === 'search' && (
+          <Search key={searchVersion} keys={keys} onBack={back} open={(v) => push({ kind: 'player', video: v })} />
+        )}
         {current.kind === 'settings' && (
-          <Settings keys={keys} onBack={back} editKeys={() => push({ kind: 'setup' })} onTvModeChange={setTvPref} deviceIsTv={deviceIsTv} />
+          <Settings
+            keys={keys}
+            onBack={back}
+            editKeys={() => push({ kind: 'setup' })}
+            onTvModeChange={setTvPref}
+            deviceIsTv={deviceIsTv}
+            onKeys={setKeys}
+          />
         )}
       </>
     );
@@ -167,6 +187,7 @@ export function App() {
   return (
     <TvContext.Provider value={tv}>
       {content}
+      {keys.youtube && <UpdatePopup tv={tv} />}
       {notice && <div className="toast">{notice}</div>}
     </TvContext.Provider>
   );
