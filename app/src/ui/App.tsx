@@ -1,9 +1,21 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
-import type { Candidate } from '../engine/types.ts';
-import { loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
+import { claudeAuth, loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
+import { diagSnapshot, sayDiag, startDiag, stopDiag } from '../lib/diagStore.ts';
 import { startLinkServer, type LinkMessage } from '../lib/link.ts';
-import { ask, getTold, mergeTold, newSet, search } from '../lib/wander.ts';
+import { ask, getTold, mergeTold, newSet, search, setsLeftToday, todaysFeed } from '../lib/wander.ts';
+import { controlPlayer, nowPlaying } from '../lib/nowPlaying.ts';
+import { checkForUpdate, installUpdate } from '../lib/updater.ts';
+import type { Candidate, DailyFeed } from '../engine/types.ts';
+
+declare const __APP_VERSION__: string;
+
+/** The TV's current set, without the bulky bits, for showing on the phone. */
+function compactFeed(feed: DailyFeed | null) {
+  if (!feed) return null;
+  const slim = (c: Candidate): Candidate => ({ ...c, description: undefined });
+  return { ...feed, rows: feed.rows.map((r) => ({ ...r, items: r.items.map(slim) })), shorts: feed.shorts.map(slim) };
+}
 import { onToast, toast } from '../lib/toast.ts';
 import { detectTv } from '../lib/device.ts';
 import { getSettings } from '../lib/settings.ts';
@@ -15,11 +27,13 @@ import { Player } from './Player.tsx';
 import { preloadSearch, Search } from './Search.tsx';
 import { Settings } from './Settings.tsx';
 import { UpdatePopup } from './UpdatePopup.tsx';
+import { RemoteScreen } from './RemoteScreen.tsx';
 
 export type Screen =
   | { kind: 'home' }
   | { kind: 'player'; video: Candidate }
-  | { kind: 'search' }
+  | { kind: 'search'; target?: 'here' | 'tv' }
+  | { kind: 'remote' }
   | { kind: 'settings' }
   | { kind: 'setup' };
 
@@ -76,6 +90,49 @@ export function App() {
           toast('📱 Your phone asked for a new set…');
           await newSet(k, '', () => undefined);
           return { ok: true };
+        case 'diag': {
+          if (msg.action === 'start') {
+            const auth = k ? claudeAuth(k) : null;
+            if (!auth) throw new Error('The TV has no Anthropic key yet. Send your keys first.');
+            startDiag(auth, msg.text ?? '');
+            toast('📱 Diagnosis started from your phone (Settings → Diagnose to watch).');
+          } else if (msg.action === 'say') sayDiag(msg.text ?? '');
+          else if (msg.action === 'stop') stopDiag();
+          return diagSnapshot(true);
+        }
+        case 'tvState': {
+          const feed = todaysFeed();
+          const feedVersion = feed?.generatedAt ?? 0;
+          return {
+            version: __APP_VERSION__,
+            screen: stackRef.current[stackRef.current.length - 1].kind,
+            nowPlaying: nowPlaying(),
+            setsLeft: setsLeftToday(),
+            feedVersion,
+            feed: msg.feedVersion === feedVersion ? undefined : compactFeed(feed),
+          };
+        }
+        case 'play':
+          setStack((st) =>
+            st[st.length - 1].kind === 'player' ? [...st.slice(0, -1), { kind: 'player', video: msg.video }] : [...st, { kind: 'player', video: msg.video }],
+          );
+          return { ok: true };
+        case 'player':
+          if (msg.action === 'close') {
+            if (stackRef.current[stackRef.current.length - 1].kind === 'player') back();
+            return { ok: true };
+          }
+          return { ok: controlPlayer(msg.action) };
+        case 'home':
+          setStack([{ kind: 'home' }]);
+          return { ok: true };
+        case 'update': {
+          const info = await checkForUpdate(true);
+          if (!info) return { upToDate: true, version: __APP_VERSION__ };
+          toast(`📱 Updating to ${info.name}… confirm “Install” with the remote.`);
+          const status = await installUpdate(info, () => undefined);
+          return { status, version: info.name };
+        }
         case 'search': {
           if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
           toast(`📱 Searching for “${msg.q}”…`);
@@ -169,7 +226,21 @@ export function App() {
           <Player key={current.video.id} video={current.video} onBack={back} open={(v) => replace({ kind: 'player', video: v })} />
         )}
         {current.kind === 'search' && (
-          <Search key={searchVersion} keys={keys} onBack={back} open={(v) => push({ kind: 'player', video: v })} />
+          <Search
+            key={searchVersion}
+            keys={keys}
+            onBack={back}
+            open={(v) => push({ kind: 'player', video: v })}
+            initialTarget={current.target}
+          />
+        )}
+        {current.kind === 'remote' && (
+          <RemoteScreen
+            keys={keys}
+            onBack={back}
+            openSearch={() => push({ kind: 'search', target: 'tv' })}
+            openDiagnose={() => push({ kind: 'settings' })}
+          />
         )}
         {current.kind === 'settings' && (
           <Settings

@@ -22,16 +22,19 @@ export function Search({
   onBack,
   open,
   initialQuery,
+  initialTarget,
 }: {
   keys: ApiKeys;
   onBack: () => void;
   open: (v: Candidate) => void;
   /** Set when the search came from somewhere else (e.g. spoken on the phone for the TV). */
   initialQuery?: string;
+  /** Opened from the TV remote screen: results go to the TV by default. */
+  initialTarget?: 'here' | 'tv';
 }) {
   const tv = useTv();
   const tvLink = !tv ? linkedTv() : null;
-  const [target, setTarget] = useState<'here' | 'tv'>('here');
+  const [target, setTarget] = useState<'here' | 'tv'>(tvLink && initialTarget === 'tv' ? 'tv' : 'here');
   const [q, setQ] = useState(initialQuery ?? lastQuery);
   const [results, setResults] = useState<Candidate[]>(initialQuery ? [] : lastResults);
   const [busy, setBusy] = useState(false);

@@ -3,6 +3,7 @@ import type { Candidate } from '../engine/types.ts';
 import { likeRatio, quality, isHiddenGem } from '../engine/feed.ts';
 import { decodeEntities, formatAge, formatCount, formatDuration } from '../lib/format.ts';
 import { loadYouTubeApi, type YTPlayer } from '../lib/ytPlayer.ts';
+import { clearNowPlaying, setNowPlaying } from '../lib/nowPlaying.ts';
 import { hideChannel, lessLikeThis, markOpened, recordWatch, related } from '../lib/wander.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { useTv } from './App.tsx';
@@ -59,6 +60,7 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
           events: {
             onReady: (e) => {
               playerRef.current = e.target;
+              setNowPlaying(video, e.target);
               const d = e.target.getDuration();
               if (d) duration.current = d;
               // On TV the remote talks to our wrapper, never to the iframe directly.
@@ -86,6 +88,7 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
         /* ignore */
       }
       playerRef.current = null;
+      clearNowPlaying(video.id);
       recordWatch(video, watchedSec.current, Math.round(duration.current));
     };
   }, [video, tv]);
