@@ -1,7 +1,12 @@
 name: Build Wander APK
 
+# One build per change: the build on the working branch runs the tests and, if they pass,
+# publishes the update the app offers. Merging into master records the change without
+# building the same code a second time.
 on:
   push:
+    branches-ignore:
+      - master
     paths:
       - 'app/**'
       - '.github/workflows/android.yml'
@@ -55,15 +60,12 @@ jobs:
           # Same file under a fixed name, so .../releases/latest/download/Wander.apk always works (handy on TV).
           cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/Wander.apk"
 
-      # Branch builds only check that everything compiles; releases (which the app's
-      # update button offers) come from master, so each update is a real change.
       - uses: actions/upload-artifact@v4
         with:
           name: Wander-${{ env.VERSION_NAME }}
           path: Wander-${{ env.VERSION_NAME }}.apk
 
       - name: Publish release
-        if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION_NAME }}
