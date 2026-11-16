@@ -7,6 +7,7 @@ import { hideChannel, lessLikeThis, markOpened, recordWatch, related } from '../
 import { VideoCard } from './VideoCard.tsx';
 import { useTv } from './App.tsx';
 import { stopReading } from '../lib/readAloud.ts';
+import { tickWatching, timeStatus, timeUp } from '../lib/screenTime.ts';
 
 const TIER_EXPLAIN: Record<Candidate['tier'], string> = {
   core: 'One of your interests, from an angle you haven’t seen yet.',
@@ -41,6 +42,10 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
   const [dismissed, setDismissed] = useState('');
   const isShort = video.tier === 'shorts' || (video.durationSec > 0 && video.durationSec <= 60);
   const rel = useMemo(() => related(video), [video]);
+  // Daily TV time (profiles with the timer on): a gentle notice, and the goodbye after the last video.
+  const [timeNote, setTimeNote] = useState('');
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
 
   useEffect(() => {
     markOpened(video);
@@ -68,12 +73,30 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
               if (tv) e.target.getIframe().setAttribute('tabindex', '-1');
             },
             onError: (e) => setError(PLAYER_ERRORS[e.data] ?? `YouTube couldn’t play this (error ${e.data}).`),
+            onStateChange: (e) => {
+              // The video finished and today's time is used up: time for the goodbye.
+              if (e.data === YT.PlayerState.ENDED && timeUp()) onBackRef.current();
+            },
           },
         });
         // Count seconds actually spent playing (not seeking or paused).
         timer = window.setInterval(() => {
           try {
-            if (player?.getPlayerState() === YT.PlayerState.PLAYING) watchedSec.current += 1;
+            if (player?.getPlayerState() === YT.PlayerState.PLAYING) {
+              watchedSec.current += 1;
+              tickWatching();
+              const t = timeStatus();
+              if (t.on && watchedSec.current % 5 === 0) {
+                const videoLeft = Math.max(0, (player.getDuration() || duration.current) - player.getCurrentTime());
+                if (t.leftSec < -20 * 60) {
+                  // Never cut a video off, unless it runs far past the day's time.
+                  player.pauseVideo();
+                  onBackRef.current();
+                } else if (t.leftSec <= videoLeft + 30) setTimeNote('This is the last one for today.');
+                else if (t.leftSec <= 10 * 60) setTimeNote(`${Math.ceil(t.leftSec / 60)} minutes of TV left today.`);
+                else setTimeNote('');
+              }
+            }
           } catch {
             /* player not ready yet */
           }
@@ -130,6 +153,7 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
         ref={holder}
         {...(tv ? { tabIndex: 0, 'data-own-keys': true, 'data-autofocus': true, onKeyDown: onRemoteKey } : {})}
       >
+        {timeNote && !error && <div className="time-note">{timeNote}</div>}
         {tv && hint && !error && <div className="tv-hint">OK play / pause · ◀ ▶ skip 10s · ▼ details and more</div>}
         {error && (
           <div className="player-error">

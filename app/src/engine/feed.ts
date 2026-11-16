@@ -54,6 +54,8 @@ export interface FeedContext {
   /** The on-device ranking model's weights. */
   weights?: Weights;
   rng?: () => number;
+  /** Only videos Claude judged suitable for young children (kid profiles). */
+  kidCheck?: boolean;
 }
 
 interface Used {
@@ -115,6 +117,7 @@ function pick(
 export function eligible(c: Candidate, ctx: FeedContext, shorts = false): boolean {
   if (ctx.watchedIds.has(c.id)) return false;
   if (ctx.mutedChannels.has(c.channelId)) return false;
+  if (ctx.kidCheck && c.facets?.kidSafe !== true) return false;
   if (shorts) return c.durationSec > 0 && c.durationSec <= SHORT_MAX_SEC;
   return c.durationSec >= MAIN_MIN_SEC && c.durationSec <= MAIN_MAX_SEC;
 }

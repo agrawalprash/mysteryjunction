@@ -31,6 +31,7 @@ export type LinkMessage =
   | { type: 'key'; key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Enter' | 'Back' | 'Home' }
   | { type: 'update' }
   | { type: 'report'; profileId?: string }
+  | { type: 'extend'; profileId: string; minutes: number }
   | { type: 'guide'; profileId: string; addRule?: string; forget?: { kind: 'row' | 'interest' | 'rule'; value: string } };
 
 // ---------------------------------------------------------------- TV side

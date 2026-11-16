@@ -528,19 +528,84 @@ html.tv .profile-name { font-size: 1.9rem; }
 .explore-ask { padding: 0 16px; }
 .explore-ask .ask-form { flex: 1; }
 .explore-ask .ask-form input { width: 100%; }
+.last-ask { margin-top: 6px; }
 .explore-status { padding: 0 16px 8px; }
-.explore-worlds { padding: 8px 16px 40px; }
-.explore-worlds h2 { font-size: 18px; margin: 18px 0 10px; }
-.world-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-.world-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px; border-radius: var(--radius); border: 2px solid transparent; background: var(--surface-2); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
-.world-edge { background: transparent; border: 2px dashed var(--surface-2); }
-.world-on { border-color: var(--brand); border-style: solid; }
-.world-name { font-weight: 700; font-size: 15px; }
-body.tv .explore-ask, body.tv .explore-status, body.tv .explore-worlds { padding-left: 0; padding-right: 0; }
-body.tv .explore-worlds h2 { font-size: 1.75rem; margin: 2rem 0 1rem; }
-body.tv .world-grid { grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 1rem; }
-body.tv .world-tile { padding: 1.25rem 1.4rem; border-width: 0.25rem; border-radius: 1rem; gap: 0.4rem; }
+.explore-worlds { padding: 4px 0 32px; }
+.explore-worlds h2 { font-size: 18px; margin: 20px 16px 4px; }
+.explore-worlds > p { margin: 0 16px 8px; }
+.explore-worlds .chip-row { padding: 0 16px; }
+.world-strip { display: flex; gap: 12px; overflow-x: auto; padding: 6px 16px 4px; scrollbar-width: none; }
+.world-tile { flex: 0 0 150px; display: flex; flex-direction: column; gap: 4px; padding: 0 0 10px; border-radius: var(--radius); border: 2px solid transparent; background: var(--surface-2); color: var(--text); font: inherit; text-align: left; cursor: pointer; overflow: hidden; }
+.world-thumb { display: block; aspect-ratio: 16 / 9; background: var(--surface); }
+.world-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.world-name { font-weight: 700; font-size: 15px; padding: 4px 10px 0; }
+.world-sub { color: var(--muted); font-size: 12px; padding: 0 10px; }
+.world-edge { background: transparent; border: 2px dashed #444; }
+.world-edge .world-thumb img { opacity: 0.6; }
+.topbar-sub { font-size: 12px; color: var(--muted); font-weight: 400; }
+.chip-world { font-weight: 600; }
+body.tv .explore-ask, body.tv .explore-status { padding-left: 0; padding-right: 0; }
+body.tv .explore-worlds h2 { font-size: 1.75rem; margin: 2rem 0 0.4rem; }
+body.tv .explore-worlds > p, body.tv .explore-worlds .chip-row { margin-left: 0; padding: 0; }
+body.tv .world-strip { gap: 1.2rem; padding: 0.8rem 0; overflow: visible; flex-wrap: wrap; }
+body.tv .world-tile { flex: 0 0 17rem; border-width: 0.25rem; border-radius: 1rem; padding-bottom: 1rem; }
 body.tv .world-tile:focus { border-color: var(--text); border-style: solid; outline: none; transform: scale(1.04); }
-body.tv .world-name { font-size: 1.5rem; }
-.card-why { color: #cfd8e3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
-.card:focus .card-why, .card:hover .card-why { -webkit-line-clamp: 5; }
+body.tv .world-name { font-size: 1.5rem; padding: 0.6rem 1rem 0; }
+body.tv .world-sub { font-size: 1.1rem; padding: 0 1rem; }
+body.tv .topbar-sub { font-size: 1.1rem; }
+body.kid .world-tile { flex-basis: 190px; }
+body.kid .world-name { font-size: 18px; }
+body.tv.kid .world-tile { flex-basis: 22rem; }
+body.tv.kid .world-name { font-size: 1.9rem; }
+
+/* ---------------------------------------------------------------- PIN pad */
+.pin-backdrop { align-items: center; z-index: 40; }
+.pin-sheet { max-width: 340px; margin: 0 auto; text-align: center; border-radius: 20px; }
+.pin-dots { display: flex; justify-content: center; gap: 14px; margin: 14px 0; }
+.pin-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); }
+.pin-dot-on { background: var(--text); border-color: var(--text); }
+.pin-pad { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.pin-pad .btn { min-height: 52px; font-size: 20px; }
+body.tv .pin-sheet { max-width: 34rem; }
+body.tv .pin-pad .btn { min-height: 4.5rem; font-size: 2rem; }
+body.tv .pin-dot { width: 1.4rem; height: 1.4rem; }
+
+/* ---------------------------------------------------------------- goodbye */
+.goodbye { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; padding: 24px; text-align: center; box-sizing: border-box; }
+.goodbye h1 { margin: 0; font-size: 28px; line-height: 1.2; }
+.goodbye-idea { max-width: 560px; background: var(--surface-2); border-radius: 18px; padding: 18px 22px; }
+.goodbye-idea p { margin: 6px 0 0; font-size: 18px; line-height: 1.4; }
+.goodbye-label { color: var(--brand); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+body.tv .goodbye h1 { font-size: 3.4rem; }
+body.tv .goodbye-idea { max-width: 60rem; padding: 2rem 2.4rem; border-radius: 1.6rem; }
+body.tv .goodbye-idea p { font-size: 2rem; }
+body.tv .goodbye-label { font-size: 1.2rem; }
+body.tv .goodbye svg { width: 6rem; height: 6rem; }
+.time-note { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 3; background: rgba(14, 18, 34, 0.9); color: #fff; padding: 8px 16px; border-radius: 999px; font-weight: 700; font-size: 14px; pointer-events: none; white-space: nowrap; }
+body.tv .time-note { top: 1.5rem; padding: 0.8rem 1.8rem; font-size: 1.6rem; }
+.pin-input { width: 120px; letter-spacing: 0.3em; }
+
+/* ---------------------------------------------------------------- kid home and timer */
+.time-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); font-weight: 700; font-size: 13px; }
+.time-blocks { display: inline-flex; gap: 3px; }
+.time-blocks span { width: 8px; height: 8px; border-radius: 3px; background: #3a4166; }
+.time-blocks span.on { background: var(--brand); }
+body.tv .time-chip { padding: 0.5rem 1.2rem; font-size: 1.3rem; gap: 0.6rem; }
+body.tv .time-chip svg { width: 1.8rem; height: 1.8rem; }
+body.tv .time-blocks span { width: 1.1rem; height: 0.8rem; }
+.kid-home { padding: 8px 16px 24px; }
+.kid-greeting { padding: 4px 16px 0; }
+.kid-greeting h1 { margin: 0; font-size: 26px; }
+.kid-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.card-kid { width: 100%; }
+.card-kid .card-title { font-size: 16px; font-weight: 700; }
+.card-label { position: absolute; top: 8px; left: 8px; background: rgba(10, 12, 24, 0.82); color: #fff; font-size: 12px; font-weight: 800; padding: 3px 9px; border-radius: 999px; }
+.kid-actions { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 16px 24px; }
+body.tv .kid-home { padding: 1rem 0 2rem; }
+body.tv .kid-greeting { padding: 0; }
+body.tv .kid-greeting h1 { font-size: 3rem; }
+body.tv .kid-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.8rem; }
+body.tv .card-kid .card-title { font-size: 1.6rem; }
+body.tv .card-label { font-size: 1.1rem; padding: 0.3rem 0.9rem; top: 0.8rem; left: 0.8rem; }
+body.tv .kid-actions { padding: 0 0 2rem; gap: 1.2rem; }
+.report-time { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; font-size: 14px; }

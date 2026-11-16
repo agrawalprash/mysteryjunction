@@ -49,3 +49,9 @@ test('worldVideos returns only that world, best first', () => {
   assert.equal(out.length, 3);
   assert.ok(Number(out[0].id.slice(1)) > Number(out[2].id.slice(1)));
 });
+
+test('nearbyWorlds lists the worlds that share videos, most shared first', async () => {
+  const { nearbyWorlds } = await import('./worlds.ts');
+  const pool = [...many(3, ['jazz', 'live music']), ...many(1, ['jazz', 'new york']), ...many(3, ['new york'])];
+  assert.deepEqual(nearbyWorlds(pool, 'jazz').map((w) => w.concept), ['live music', 'new york']);
+});

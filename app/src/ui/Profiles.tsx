@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { addProfile, listProfiles, PRESET_LABELS, updateProfile, type Preset, type ProfileOptions } from '../lib/profiles.ts';
+import { addProfile, listProfiles, needsPin, parentPin, PRESET_LABELS, setParentPin, updateProfile, type Preset, type ProfileOptions } from '../lib/profiles.ts';
 import { currentProfile, removeProfile, switchProfile } from '../lib/wander.ts';
+import { requestPin } from '../lib/pinGate.ts';
 
 const COLORS = ['#e8a33d', '#5cc8be', '#f08a6c', '#8f7cf0', '#6cb4f0', '#9ccc65'];
 export function profileColor(id: string): string {
@@ -29,7 +30,8 @@ export function ProfilePicker({ onDone, onManage }: { onDone: () => void; onMana
           <button
             key={p.id}
             className={`profile-card${p.id === active ? ' profile-current' : ''}`}
-            onClick={() => {
+            onClick={async () => {
+              if (needsPin(p) && !(await requestPin(`Switch to ${p.name}.`))) return;
               switchProfile(p.id);
               onDone();
             }}
@@ -68,6 +70,7 @@ export function ProfilesPanel({ onSwitched }: { onSwitched: () => void }) {
   const refresh = () => force((n) => n + 1);
   const [newName, setNewName] = useState('');
   const [newPreset, setNewPreset] = useState<Preset>('kid');
+  const [pinDraft, setPinDraft] = useState('');
   const profiles = listProfiles();
   const me = currentProfile();
   const setOpt = (patch: Partial<ProfileOptions>) => {
@@ -146,7 +149,36 @@ export function ProfilesPanel({ onSwitched }: { onSwitched: () => void }) {
         checked={me.options.readAloud}
         onChange={(v) => setOpt({ readAloud: v })}
       />
-      <p className="muted small">Coming next as options here: daily timer with goodbye, approved channels and a PIN.</p>
+      <Toggle
+        label="Claude checks every video"
+        hint="Only videos Claude judges clearly suitable for a young child are shown, searches included."
+        checked={me.options.contentCheck}
+        onChange={(v) => setOpt({ contentCheck: v })}
+      />
+      <Toggle
+        label="Simple home"
+        hint="Six big picks instead of rows, with bigger text and tiles."
+        checked={me.options.simpleHome}
+        onChange={(v) => setOpt({ simpleHome: v })}
+      />
+      <Toggle
+        label="Daily TV time"
+        hint="A visible timer, a notice before the last video, then a goodbye. Videos are never cut off."
+        checked={me.options.timer}
+        onChange={(v) => setOpt({ timer: v })}
+      />
+      {me.options.timer && (
+        <label className="field">
+          <span>Minutes a day</span>
+          <select value={me.options.dailyMinutes} onChange={(e) => setOpt({ dailyMinutes: Number(e.target.value) })}>
+            {[15, 20, 30, 45, 60, 75, 90, 120, 180].map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {me.id !== 'main' && (
         <button
@@ -162,6 +194,46 @@ export function ProfilesPanel({ onSwitched }: { onSwitched: () => void }) {
           Delete {me.name}
         </button>
       )}
+
+      <h4>Grown-up PIN</h4>
+      <p className="muted small">
+        {parentPin()
+          ? 'Set. It’s needed to leave a kid profile, open Settings from one, or add time.'
+          : 'Keeps a child in their profile: needed to switch to a grown-up profile, open Settings, or add time.'}
+      </p>
+      <div className="end-actions left">
+        <input
+          className="pin-input"
+          type="password"
+          inputMode="numeric"
+          maxLength={4}
+          placeholder="4 digits"
+          value={pinDraft}
+          onChange={(e) => setPinDraft(e.target.value.replace(/\D/g, '').slice(0, 4))}
+        />
+        <button
+          className="btn btn-ghost"
+          disabled={pinDraft.length !== 4}
+          onClick={() => {
+            setParentPin(pinDraft);
+            setPinDraft('');
+            refresh();
+          }}
+        >
+          {parentPin() ? 'Change PIN' : 'Set PIN'}
+        </button>
+        {parentPin() && (
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              setParentPin('');
+              refresh();
+            }}
+          >
+            Remove
+          </button>
+        )}
+      </div>
 
       <h4>Add a profile</h4>
       <label className="field">

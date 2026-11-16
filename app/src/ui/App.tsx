@@ -24,18 +24,23 @@ import { closeOverlay } from '../lib/overlay.ts';
 import { Setup } from './Setup.tsx';
 import { Home } from './Home.tsx';
 import { Player } from './Player.tsx';
-import { Explore, runExplore } from './Explore.tsx';
+import { ExploreHub, ResultsPage, runExplore, WorldPage } from './Explore.tsx';
 import { Settings } from './Settings.tsx';
 import { UpdatePopup } from './UpdatePopup.tsx';
 import { RemoteScreen } from './RemoteScreen.tsx';
 import { ProfilePicker } from './Profiles.tsx';
 import { Report } from './Report.tsx';
+import { Goodbye } from './Goodbye.tsx';
+import { PinPad } from './PinPad.tsx';
+import { addMinutes, onTimeChanged, timeUp } from '../lib/screenTime.ts';
 import { listProfiles } from '../lib/profiles.ts';
 
 export type Screen =
   | { kind: 'home' }
   | { kind: 'player'; video: Candidate }
   | { kind: 'explore' }
+  | { kind: 'world'; concept: string; via?: string }
+  | { kind: 'results' }
   | { kind: 'remote' }
   | { kind: 'profiles' }
   | { kind: 'report' }
@@ -56,11 +61,15 @@ export function App() {
   stackRef.current = stack;
 
   const tv = tvPref === 'on' || (tvPref === 'auto' && deviceIsTv);
+  // Re-check the daily timer when time is added or used up.
+  const [, setTimeTick] = useState(0);
+  useEffect(() => onTimeChanged(() => setTimeTick((n) => n + 1)), []);
   const keysRef = useRef(keys);
   keysRef.current = keys;
   const [notice, setNotice] = useState('');
   // Phone requests (search, ask) show their results in Explore on the TV.
-  const showExplore = () => setStack((st) => (st[st.length - 1].kind === 'explore' ? st : [{ kind: 'home' }, { kind: 'explore' }]));
+  const showExplore = () =>
+    setStack((st) => (st[st.length - 1].kind === 'results' ? st : [{ kind: 'home' }, { kind: 'explore' }, { kind: 'results' }]));
 
   useEffect(() => {
     let timer: number | undefined;
@@ -173,6 +182,10 @@ export function App() {
         }
         case 'report':
           return { profiles: listProfiles(), active: currentProfile().id, report: profileReport(msg.profileId ?? currentProfile().id) };
+        case 'extend':
+          addMinutes(msg.profileId, msg.minutes);
+          toast(`📱 ${msg.minutes} more minutes added from the phone.`);
+          return { profiles: listProfiles(), active: currentProfile().id, report: profileReport(msg.profileId) };
         case 'guide':
           guideProfile(msg.profileId, { addRule: msg.addRule, forget: msg.forget });
           return { profiles: listProfiles(), active: currentProfile().id, report: profileReport(msg.profileId) };
@@ -235,6 +248,7 @@ export function App() {
     const t = window.setTimeout(() => {
       const prev = homeFocus.current;
       if (current.kind === 'home' && prev?.isConnected) prev.focus({ preventScroll: true });
+      else if (current.kind === 'world') focusFirst('.world-page .row .card');
       else focusFirst();
     }, 60);
     return () => clearTimeout(t);
@@ -243,9 +257,15 @@ export function App() {
   if (!keys) return <div className="splash">Wander</div>;
 
   const needsSetup = !keys.youtube;
+  document.body.classList.toggle('kid', currentProfile().options.simpleHome);
+  // Kid profiles with the timer on: when today's time is used up, every screen but the
+  // player (finishing the last video), the profile picker and settings becomes the goodbye.
+  const showGoodbye = !needsSetup && timeUp() && !['player', 'profiles', 'settings', 'setup'].includes(current.kind);
 
   let content;
-  if (needsSetup || current.kind === 'setup') {
+  if (showGoodbye) {
+    content = <Goodbye keys={keys} onSwitchProfile={() => push({ kind: 'profiles' })} />;
+  } else if (needsSetup || current.kind === 'setup') {
     content = (
       <Setup
         initial={keys}
@@ -268,7 +288,25 @@ export function App() {
           <Player key={current.video.id} video={current.video} onBack={back} open={(v) => replace({ kind: 'player', video: v })} />
         )}
         {current.kind === 'explore' && (
-          <Explore keys={keys} onBack={back} goHome={() => setStack([{ kind: 'home' }])} open={(v) => push({ kind: 'player', video: v })} />
+          <ExploreHub
+            keys={keys}
+            onBack={back}
+            openWorld={(concept, via) => push({ kind: 'world', concept, via })}
+            openResults={() => push({ kind: 'results' })}
+          />
+        )}
+        {current.kind === 'world' && (
+          <WorldPage
+            key={current.concept}
+            concept={current.concept}
+            via={current.via}
+            onBack={back}
+            open={(v) => push({ kind: 'player', video: v })}
+            openWorld={(concept) => push({ kind: 'world', concept })}
+          />
+        )}
+        {current.kind === 'results' && (
+          <ResultsPage onBack={back} goHome={() => setStack([{ kind: 'home' }])} open={(v) => push({ kind: 'player', video: v })} />
         )}
         {current.kind === 'report' && <Report keys={keys} onBack={back} />}
         {current.kind === 'profiles' && <ProfilePicker onDone={back} onManage={() => replace({ kind: 'settings' })} />}
@@ -296,11 +334,12 @@ export function App() {
     <TvContext.Provider value={tv}>
       {content}
       {keys.youtube && <UpdatePopup tv={tv} />}
-      {!tv && keys.youtube && linkedTv() && ['home', 'explore', 'settings', 'report'].includes(current.kind) && (
+      {!tv && keys.youtube && linkedTv() && ['home', 'explore', 'world', 'results', 'settings', 'report'].includes(current.kind) && (
         <button className="remote-fab" onClick={() => push({ kind: 'remote' })}>
           📺 Remote
         </button>
       )}
+      <PinPad tv={tv} />
       {notice && <div className="toast">{notice}</div>}
     </TvContext.Provider>
   );
