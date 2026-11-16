@@ -26,7 +26,7 @@ import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } f
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
 import { AUTO_BUDGET, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
-import { askWander, describeVideos, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
+import { askWander, describeVideos, explainPicks, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
 import { getSettings } from './settings.ts';
 import { activeProfile, deleteProfile, listProfiles, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
@@ -406,6 +406,8 @@ function afterShowing(keys: ApiKeys, found: Candidate[]) {
       mergePool(undescribed);
       persist();
     }
+    if (gen !== generation) return;
+    if (auth) await explainFeed(auth).catch((e) => console.warn('Why lines failed', e));
     if (gen !== generation) return;
     await maybeRefill(keys).catch((e) => console.warn('Refill failed', e));
     if (gen !== generation) return;
@@ -933,4 +935,33 @@ export async function exploreAsk(keys: ApiKeys, text: string, onProgress: (msg: 
   }
   const focus = out.feed?.rows.find((r) => r.id === 'focus')?.items ?? [];
   return { text: t, reply: out.reply, changes: out.changes, poolHits: [], results: [], focus, newSet: !!out.feed, notice: out.notice };
+}
+
+// ---------------------------------------------------------------- why lines
+
+/** Ask Claude for a "why this for you" line for each video on screen that doesn't have one yet. */
+async function explainFeed(auth: ClaudeAuth) {
+  const feed = state.feed;
+  if (!feed) return;
+  const todo = feed.rows.flatMap((r) => r.items).filter((c) => !c.why).slice(0, 48);
+  if (!todo.length) return;
+  const gen = generation;
+  const now = Date.now();
+  const lines = await explainPicks(
+    auth,
+    {
+      interests: rankTopics(Object.keys(state.conceptProfile).length >= 5 ? state.conceptProfile : state.profile, now)
+        .filter((t) => t.score > 0.05)
+        .slice(0, 12)
+        .map((t) => t.name),
+      tasteSummary: state.taste?.summary ?? '',
+      recentTitles: state.history.slice(-8).map((h) => h.title),
+    },
+    todo,
+  );
+  if (gen !== generation || state.feed !== feed) return;
+  const add = (c: Candidate) => (lines[c.id] ? { ...c, why: lines[c.id] } : c);
+  state.feed = { ...feed, rows: feed.rows.map((r) => ({ ...r, items: r.items.map(add) })) };
+  persist();
+  emitFeedChanged();
 }

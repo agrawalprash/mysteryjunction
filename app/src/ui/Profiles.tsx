@@ -140,7 +140,13 @@ export function ProfilesPanel({ onSwitched }: { onSwitched: () => void }) {
         checked={me.options.strictSafeSearch}
         onChange={(v) => setOpt({ strictSafeSearch: v })}
       />
-      <p className="muted small">Coming next as options here: read-aloud, daily timer with goodbye, approved channels and a PIN.</p>
+      <Toggle
+        label="Read aloud on the TV"
+        hint="When a video is picked out with the remote, the TV reads its “why this” line."
+        checked={me.options.readAloud}
+        onChange={(v) => setOpt({ readAloud: v })}
+      />
+      <p className="muted small">Coming next as options here: daily timer with goodbye, approved channels and a PIN.</p>
 
       {me.id !== 'main' && (
         <button

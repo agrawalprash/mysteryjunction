@@ -197,8 +197,8 @@ export function RemoteScreen({
         onPointerCancel={() => gestures.cancel()}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <button className="pad-corner pad-exit" aria-label="Back to Wander on the phone" onPointerDown={stop} onClick={onBack}>
-          ←
+        <button className="pad-corner pad-exit" aria-label="Leave the remote" onPointerDown={stop} onClick={onBack}>
+          ✕
         </button>
         <span
           className={`pad-corner pad-dot link-dot${error ? ' link-dot-bad' : state ? ' link-dot-ok' : ''}`}
@@ -235,16 +235,14 @@ export function RemoteScreen({
       </div>
 
       <nav className="remote-bar">
-        <button aria-label="Back" onClick={() => key('Back')}>↩</button>
-        <button aria-label="Home" onClick={() => key('Home')}>⌂</button>
+        <button onClick={() => key('Back')}>← Back</button>
         <button
-          aria-label="More"
           onClick={() => {
             setMore(true);
             setOverlayCloser(() => setMore(false));
           }}
         >
-          ⋯
+          More
         </button>
       </nav>
 
@@ -283,26 +281,6 @@ export function RemoteScreen({
               </button>
               <button className="btn btn-ghost" onClick={openDiagnose}>
                 🩺 Diagnose TV
-              </button>
-              <button
-                className="btn btn-ghost"
-                onClick={async () => {
-                  setStatus('Checking for an update on the TV…');
-                  try {
-                    const r = (await sendToTv({ type: 'update' })) as { upToDate?: boolean; status?: string; version?: string };
-                    setStatus(
-                      r.upToDate
-                        ? `The TV already has the latest version (${r.version}).`
-                        : r.status === 'needs-permission'
-                          ? 'On the TV: allow installs from Wander (one time), then press Update TV again.'
-                          : `On the TV: press Install with the remote to finish updating to ${r.version}.`,
-                    );
-                  } catch (e) {
-                    setStatus(`✗ ${e instanceof Error ? e.message : String(e)}`);
-                  }
-                }}
-              >
-                ⬆ Update TV{state ? ` (${state.version})` : ''}
               </button>
             </div>
             {error && <p className="small error-text">{error}</p>}

@@ -3,10 +3,6 @@ import type { ApiKeys } from '../lib/keys.ts';
 import { currentProfile, resetLearning } from '../lib/wander.ts';
 import { DiagnosePanel } from './DiagnosePanel.tsx';
 import { PhoneLinkPanel, TvLinkPanel } from './LinkPanel.tsx';
-import { FeedbackPanel } from './FeedbackPanel.tsx';
-import { FEEDBACK_ENABLED } from '../lib/feedback.ts';
-import { FeedbackSheet } from './FeedbackSheet.tsx';
-import { setOverlayCloser } from '../lib/overlay.ts';
 import { useTv } from './App.tsx';
 import { getSettings, LANGUAGES, updateSettings, type Settings as Prefs } from '../lib/settings.ts';
 import { ProfilesPanel } from './Profiles.tsx';
@@ -19,7 +15,6 @@ export function Settings({
   editKeys,
   onTvModeChange,
   deviceIsTv,
-  onKeys,
   openReport,
 }: {
   keys: ApiKeys;
@@ -27,10 +22,8 @@ export function Settings({
   editKeys: () => void;
   onTvModeChange: (m: Prefs['tvMode']) => void;
   deviceIsTv: boolean;
-  onKeys: (k: ApiKeys) => void;
   openReport: () => void;
 }) {
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [, force] = useState(0);
   const tv = useTv();
   const [prefs, setPrefs] = useState(getSettings());
@@ -63,17 +56,6 @@ export function Settings({
       )}
 
       {tv ? <TvLinkPanel /> : <PhoneLinkPanel keys={keys} />}
-
-      {FEEDBACK_ENABLED && (
-        <FeedbackPanel
-          keys={keys}
-          onKeys={onKeys}
-          openFeedback={() => {
-            setFeedbackOpen(true);
-            setOverlayCloser(() => setFeedbackOpen(false));
-          }}
-        />
-      )}
 
       <section className="panel">
         <h3>Display</h3>
@@ -133,15 +115,6 @@ export function Settings({
       </section>
 
       <p className="muted small version">Wander {__APP_VERSION__}</p>
-      {feedbackOpen && (
-        <FeedbackSheet
-          keys={keys}
-          onClose={() => {
-            setFeedbackOpen(false);
-            setOverlayCloser(null);
-          }}
-        />
-      )}
     </div>
   );
 }

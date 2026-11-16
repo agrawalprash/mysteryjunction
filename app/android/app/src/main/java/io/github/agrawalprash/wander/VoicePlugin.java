@@ -196,4 +196,43 @@ public class VoicePlugin extends Plugin {
             holdRecognizer = null;
         }
     }
+
+    // ---------------------------------------------------------------- read aloud
+
+    private android.speech.tts.TextToSpeech tts;
+    private boolean ttsReady = false;
+    private String pendingSay = null;
+
+    /** Speak a short line, replacing anything still being said. */
+    @PluginMethod
+    public void say(PluginCall call) {
+        String text = call.getString("text", "");
+        new Handler(Looper.getMainLooper()).post(() -> {
+            if (tts == null) {
+                pendingSay = text;
+                tts = new android.speech.tts.TextToSpeech(getContext(), status -> {
+                    ttsReady = status == android.speech.tts.TextToSpeech.SUCCESS;
+                    if (ttsReady) {
+                        tts.setLanguage(java.util.Locale.US);
+                        tts.setSpeechRate(0.95f);
+                        if (pendingSay != null && !pendingSay.isEmpty()) tts.speak(pendingSay, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "wander-say");
+                    }
+                    pendingSay = null;
+                });
+            } else if (ttsReady) {
+                if (text.isEmpty()) tts.stop();
+                else tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "wander-say");
+            } else {
+                pendingSay = text;
+            }
+            call.resolve();
+        });
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (tts != null) tts.shutdown();
+        tts = null;
+        ttsReady = false;
+    }
 }

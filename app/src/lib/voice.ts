@@ -7,6 +7,7 @@ interface VoicePlugin {
   holdStart(opts: { language?: string }): Promise<void>;
   holdStop(): Promise<{ text: string; error?: string }>;
   holdCancel(): Promise<void>;
+  say(opts: { text: string }): Promise<void>;
   addListener(event: 'holdPartial', fn: (e: { text: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'holdReady', fn: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'voiceKey', fn: (e: { keyCode: number }) => void): Promise<PluginListenerHandle>;
@@ -66,4 +67,20 @@ export async function holdStop(): Promise<string> {
 
 export function holdCancel() {
   if (Capacitor.isNativePlatform()) void Voice.holdCancel();
+}
+
+// ---------------------------------------------------------------- read aloud
+
+/** Say a short line aloud, replacing whatever is being said (empty text just stops). */
+export function sayAloud(text: string) {
+  if (Capacitor.isNativePlatform()) {
+    void Voice.say({ text }).catch(() => undefined);
+    return;
+  }
+  try {
+    window.speechSynthesis?.cancel();
+    if (text) window.speechSynthesis?.speak(new SpeechSynthesisUtterance(text));
+  } catch {
+    /* no speech here */
+  }
 }

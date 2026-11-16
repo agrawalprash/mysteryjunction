@@ -286,7 +286,6 @@ export function App() {
             editKeys={() => push({ kind: 'setup' })}
             onTvModeChange={setTvPref}
             deviceIsTv={deviceIsTv}
-            onKeys={setKeys}
             openReport={() => push({ kind: 'report' })}
           />
         )}

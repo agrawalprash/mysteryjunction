@@ -552,3 +552,45 @@ Good ideas: build bridges out of what the viewer loves now into nearby real-worl
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude had no ideas this time.');
   return res.parsed_output.ideas;
 }
+
+// ---------------------------------------------------------------- "why this for you" lines
+
+const WhyLines = z.object({
+  lines: z.array(z.object({ i: z.number().int(), why: z.string().describe('One sentence, at most 18 words.') })),
+});
+
+export interface WhyInput {
+  interests: string[];
+  tasteSummary: string;
+  recentTitles: string[];
+}
+
+/** One line per video saying how it connects to this viewer, shown on cards (and read aloud if set). */
+export async function explainPicks(auth: ClaudeAuth, viewer: WhyInput, videos: Candidate[]): Promise<Record<string, string>> {
+  const res = await client(auth).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 8000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(WhyLines) },
+    system: forProfile(`You write the one-line "why this for you" shown under each video in a YouTube app. Each line connects the video to something specific this viewer likes, has watched, or is curious about, and makes the video sound worth a look. Be concrete ("You liked the Roman roads video: this is the same engineering problem, 1,500 years later"), never generic ("You might like this"). For a deliberate wildcard, say honestly that it's a step somewhere new and why it might click. No clickbait, no exclamation marks, no emoji.`),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          `Viewer's interests: ${viewer.interests.join(', ') || 'still being learned'}`,
+          `Claude's read on them: ${viewer.tasteSummary || 'none yet'}`,
+          `Recently watched: ${viewer.recentTitles.join(' | ') || 'nothing yet'}`,
+          '',
+          `Write a line for each of these ${videos.length} videos:`,
+          ...videos.map(
+            (v, i) => `${i}. "${v.title}" (${v.channelTitle}) [picked as: ${v.tier}; ${v.because}${v.facets ? `; about: ${v.facets.subject}; ${(v.facets.concepts ?? []).join(', ')}` : ''}]`,
+          ),
+        ].join('\n'),
+      },
+    ],
+  });
+  if (res.stop_reason === 'refusal' || !res.parsed_output) return {};
+  const out: Record<string, string> = {};
+  for (const l of res.parsed_output.lines) if (videos[l.i] && l.why.trim()) out[videos[l.i].id] = l.why.trim();
+  return out;
+}

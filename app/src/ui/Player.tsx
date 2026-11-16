@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Candidate } from '../engine/types.ts';
-import { likeRatio, quality, isHiddenGem } from '../engine/feed.ts';
 import { decodeEntities, formatAge, formatCount, formatDuration } from '../lib/format.ts';
 import { loadYouTubeApi, type YTPlayer } from '../lib/ytPlayer.ts';
 import { clearNowPlaying, setNowPlaying } from '../lib/nowPlaying.ts';
 import { hideChannel, lessLikeThis, markOpened, recordWatch, related } from '../lib/wander.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { useTv } from './App.tsx';
+import { stopReading } from '../lib/readAloud.ts';
 
 const TIER_EXPLAIN: Record<Candidate['tier'], string> = {
   core: 'One of your interests, from an angle you haven’t seen yet.',
@@ -44,6 +44,7 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
 
   useEffect(() => {
     markOpened(video);
+    stopReading();
     let player: YTPlayer | null = null;
     let timer: number | undefined;
     let cancelled = false;
@@ -116,7 +117,6 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
     setHint(false);
   };
 
-  const lr = likeRatio(video);
 
   return (
     <div className="screen player-screen">
@@ -182,41 +182,10 @@ export function Player({ video, onBack, open }: { video: Candidate; onBack: () =
 
         {showWhy && (
           <div className="why">
-            <p>
-              <strong>{video.because || 'Picked for variety'}</strong>
+            {video.why && <p>{video.why}</p>}
+            <p className="muted small">
+              {video.because || 'Picked for variety'}. {TIER_EXPLAIN[video.tier]}
             </p>
-            <p>{TIER_EXPLAIN[video.tier]}</p>
-            <dl>
-              <dt>Topic</dt>
-              <dd>{video.topic}</dd>
-              {video.facets && (
-                <>
-                  <dt>Claude says</dt>
-                  <dd>
-                    {video.facets.subject} · {video.facets.format} · {video.facets.pace} · {video.facets.depth}
-                    {video.facets.clickbait ? ' · looks clickbaity' : ''}
-                  </dd>
-                </>
-              )}
-              <dt>Distance</dt>
-              <dd>{video.tier}</dd>
-              {video.query && (
-                <>
-                  <dt>Search used</dt>
-                  <dd>{video.query}</dd>
-                </>
-              )}
-              {video.views > 0 && (
-                <>
-                  <dt>Like ratio</dt>
-                  <dd>
-                    {(lr * 100).toFixed(1)}% {isHiddenGem(video) ? '(hidden gem)' : ''}
-                  </dd>
-                  <dt>Quality score</dt>
-                  <dd>{quality(video).toFixed(2)}</dd>
-                </>
-              )}
-            </dl>
           </div>
         )}
       </div>
