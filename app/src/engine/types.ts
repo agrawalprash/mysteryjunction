@@ -45,6 +45,8 @@ export interface Candidate extends Video {
   facets?: Facets;
   /** For tier 'custom': which of the viewer's own rows this belongs to. */
   rowId?: string;
+  /** Claude's one line on how this connects to the viewer (written when it's shown). */
+  why?: string;
 }
 
 /** One search direction proposed by the planner (Claude or the offline fallback). */

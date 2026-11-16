@@ -2,16 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
-import { buildTodaysFeed, currentProfile, getState, newSet, onFeedChanged, setsLeftToday, surprise, SURPRISES_PER_DAY, todaysFeed } from '../lib/wander.ts';
+import { buildTodaysFeed, currentProfile, getState, newSet, onFeedChanged, setsLeftToday, todaysFeed } from '../lib/wander.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { useTv, type Screen } from './App.tsx';
 import { focusFirst } from '../lib/spatialNav.ts';
 import { onVoiceKey } from '../lib/voice.ts';
-import { linkedTv } from '../lib/link.ts';
-import { setOverlayCloser } from '../lib/overlay.ts';
-import { FeedbackSheet } from './FeedbackSheet.tsx';
-import { FEEDBACK_ENABLED } from '../lib/feedback.ts';
-import { UpdateBanner } from './UpdateBanner.tsx';
 import { Avatar } from './Profiles.tsx';
 import { listProfiles } from '../lib/profiles.ts';
 
@@ -21,11 +16,6 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<Set<string>>(new Set(getState().opened));
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const openFeedback = () => {
-    setFeedbackOpen(true);
-    setOverlayCloser(() => setFeedbackOpen(false));
-  };
   const tv = useTv();
 
   // A new set can arrive from elsewhere (a request from your phone, or an Ask that finished after closing).
@@ -117,21 +107,6 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
     }
   };
 
-  const doSurprise = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      setFeed(await surprise(keys, setProgress));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-      setProgress('');
-    }
-  };
-
-  const surprisesLeft = feed ? SURPRISES_PER_DAY - feed.surprisesUsed : 0;
-
   return (
     <div
       className="screen home"
@@ -163,21 +138,8 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
               <Avatar id={currentProfile().id} name={currentProfile().name} />
             </button>
           )}
-          {!tv && linkedTv() && (
-            <button className="icon-btn" aria-label="TV remote" onClick={() => go({ kind: 'remote' })}>
-              📺
-            </button>
-          )}
           <button className="ask-btn" onClick={() => go({ kind: 'explore' })}>
             ✦ Explore
-          </button>
-          {FEEDBACK_ENABLED && (
-            <button className="icon-btn" aria-label="Feedback to Claude" onClick={openFeedback}>
-              💬
-            </button>
-          )}
-          <button className="icon-btn" aria-label="New set" onClick={doNewSet} disabled={busy}>
-            ↻
           </button>
           <button className="icon-btn" aria-label="Settings" onClick={() => go({ kind: 'settings' })}>
             <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.3.61.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.25.42.49.42h3.84c.24 0 .45-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2" /></svg>
@@ -185,7 +147,6 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
         </div>
       </header>
 
-      <UpdateBanner />
 
       {!feed && busy && (
         <div className="loading">
@@ -257,25 +218,11 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
               <button className="btn btn-ghost" disabled={busy} onClick={() => go({ kind: 'explore' })}>
                 ✦ Explore
               </button>
-              {surprisesLeft > 0 && (
-                <button className="btn btn-ghost" disabled={busy} onClick={doSurprise}>
-                  Surprise me ({surprisesLeft})
-                </button>
-              )}
             </div>
           </section>
         </main>
       )}
 
-      {feedbackOpen && (
-        <FeedbackSheet
-          keys={keys}
-          onClose={() => {
-            setFeedbackOpen(false);
-            setOverlayCloser(null);
-          }}
-        />
-      )}
     </div>
   );
 }
