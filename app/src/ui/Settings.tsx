@@ -13,6 +13,7 @@ import { useTv } from './App.tsx';
 import { DAILY_QUOTA, quotaUsed } from '../lib/youtube.ts';
 import { getSettings, LANGUAGES, updateSettings, type Settings as Prefs } from '../lib/settings.ts';
 import { rankTopics } from '../engine/profile.ts';
+import { ProfilesPanel } from './Profiles.tsx';
 
 declare const __APP_VERSION__: string;
 
@@ -158,6 +159,8 @@ export function Settings({
         </button>
         <div className="topbar-title">Settings</div>
       </header>
+
+      <ProfilesPanel onSwitched={() => force((n) => n + 1)} />
 
       <section className="panel">
         <h3>Claude’s read on your taste</h3>

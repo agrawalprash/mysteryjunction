@@ -8,7 +8,24 @@ import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 import { FORMATS, type Candidate, type CustomRow, type Direction, type ExitRecord, type Facets, type TasteProfile, type WatchRecord } from '../engine/types.ts';
 
+import { activeProfile } from './profiles.ts';
+
 export const MODEL = 'claude-opus-5-5';
+
+/** Extra instructions for a profile with the playful (kid) option on. */
+const PLAYFUL = `
+
+THIS VIEWER IS A YOUNG CHILD (about 5–8 years old), watching with a grown-up's permission.
+- Safety first: only choose directions and videos that are clearly made for or suitable for young children. No scary, violent, crude, romantic, prank, challenge or shock content, no unboxing/toy ads, no "kid influencer" channels, no clickbait. When unsure, leave it out.
+- Be playful and creative: think like a great children's librarian or museum guide. Favour wonder, making things, animals, nature, how things work, stories, music and gentle humour.
+- Follow what they love right now, whatever it is (a game, a character, an animal); never treat it as a problem. Build bridges out of it: real-world topics that start from that love (a building game → real caves, volcanoes, architecture; dinosaurs → fossils, birds).
+- Prefer calm pacing and short videos (under about 15 minutes). Avoid hyperactive, shouty, fast-cut videos.
+- Anything you write that the child sees or hears (replies, row titles, reasons) uses short, simple, warm words a 6-year-old understands, with a sense of adventure.`;
+
+/** A system prompt, adjusted for the active profile. */
+export function forProfile(system: string): string {
+  return activeProfile().options.playful ? system + PLAYFUL : system;
+}
 // If a request is declined by a safety classifier, the API retries it on a suitable fallback model.
 export const FALLBACK: { betas: Anthropic.Beta.AnthropicBeta[]; fallbacks: 'default' } = {
   betas: ['server-side-fallback-2026-07-01'],
@@ -176,7 +193,7 @@ export async function planDay(auth: ClaudeAuth, input: PlannerInput): Promise<{ 
     max_tokens: 16000,
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(Plan) },
-    system: PLAN_SYSTEM,
+    system: forProfile(PLAN_SYSTEM),
     messages: [
       {
         role: 'user',
@@ -213,7 +230,7 @@ export async function planSurprise(auth: ClaudeAuth, input: PlannerInput): Promi
     max_tokens: 8000,
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(Surprise) },
-    system: PLAN_SYSTEM,
+    system: forProfile(PLAN_SYSTEM),
     messages: [
       {
         role: 'user',
@@ -406,7 +423,7 @@ export async function askWander(auth: ClaudeAuth, ctx: AskContext): Promise<AskR
     max_tokens: 8000,
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(Ask) },
-    system: ASK_SYSTEM,
+    system: forProfile(ASK_SYSTEM),
     messages: [{ role: 'user', content: lines.join('\n') }],
   });
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude didn’t answer that one. Try saying it differently.');
@@ -470,8 +487,9 @@ export async function suggestAsks(auth: ClaudeAuth, input: PlannerInput): Promis
     max_tokens: 4000,
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(Suggestions) },
-    system:
+    system: forProfile(
       'You suggest things a viewer could ask their YouTube app for right now, as tappable chips. Base them on what you know about their taste, but keep them varied: some deeper into what they love, some genuinely new directions, and a couple of moods. Be specific and enticing ("Edo-period carpentry", "Live sessions from Lagos"), not generic ("Music", "Science").',
+    ),
     messages: [{ role: 'user', content: describeViewer(input) }],
   });
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('No suggestions');

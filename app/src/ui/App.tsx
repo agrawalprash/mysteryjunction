@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import { claudeAuth, loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
 import { diagSnapshot, sayDiag, startDiag, stopDiag } from '../lib/diagStore.ts';
 import { linkedTv, startLinkServer, type LinkMessage } from '../lib/link.ts';
-import { ask, getTold, mergeTold, newSet, onResume, search, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
+import { ask, currentProfile, getTold, mergeTold, newSet, onResume, search, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
 import { controlPlayer, nowPlaying } from '../lib/nowPlaying.ts';
 import { checkForUpdate, installUpdate } from '../lib/updater.ts';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
@@ -28,12 +28,15 @@ import { preloadSearch, Search } from './Search.tsx';
 import { Settings } from './Settings.tsx';
 import { UpdatePopup } from './UpdatePopup.tsx';
 import { RemoteScreen } from './RemoteScreen.tsx';
+import { ProfilePicker } from './Profiles.tsx';
+import { listProfiles } from '../lib/profiles.ts';
 
 export type Screen =
   | { kind: 'home' }
   | { kind: 'player'; video: Candidate }
   | { kind: 'search'; target?: 'here' | 'tv'; voice?: boolean }
   | { kind: 'remote' }
+  | { kind: 'profiles' }
   | { kind: 'settings' }
   | { kind: 'setup' };
 
@@ -75,6 +78,8 @@ export function App() {
     if (!detected || autoRemote.current || !keys?.youtube) return;
     autoRemote.current = true;
     if (!tv && linkedTv() && getSettings().remoteOnStart) setStack([{ kind: 'home' }, { kind: 'remote' }]);
+    // On the TV, with more than one profile, start with "Who's watching?".
+    else if (tv && listProfiles().length > 1) setStack([{ kind: 'home' }, { kind: 'profiles' }]);
   }, [detected, keys, tv]);
 
   // Keep the video pool topped up in the background while the app is open.
@@ -128,6 +133,7 @@ export function App() {
           return {
             version: __APP_VERSION__,
             screen: stackRef.current[stackRef.current.length - 1].kind,
+            profile: currentProfile().name,
             nowPlaying: nowPlaying(),
             setsLeft: setsLeftToday(),
             feedVersion,
@@ -275,6 +281,7 @@ export function App() {
             startWithVoice={current.voice}
           />
         )}
+        {current.kind === 'profiles' && <ProfilePicker onDone={back} onManage={() => replace({ kind: 'settings' })} />}
         {current.kind === 'remote' && (
           <RemoteScreen
             keys={keys}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
-import { buildTodaysFeed, getState, newSet, onFeedChanged, setsLeftToday, surprise, SURPRISES_PER_DAY, todaysFeed } from '../lib/wander.ts';
+import { buildTodaysFeed, currentProfile, getState, newSet, onFeedChanged, setsLeftToday, surprise, SURPRISES_PER_DAY, todaysFeed } from '../lib/wander.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { useTv, type Screen } from './App.tsx';
 import { focusFirst } from '../lib/spatialNav.ts';
@@ -13,6 +13,8 @@ import { AskSheet } from './AskSheet.tsx';
 import { FeedbackSheet } from './FeedbackSheet.tsx';
 import { FEEDBACK_ENABLED } from '../lib/feedback.ts';
 import { UpdateBanner } from './UpdateBanner.tsx';
+import { Avatar } from './Profiles.tsx';
+import { listProfiles } from '../lib/profiles.ts';
 
 export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Candidate) => void; go: (s: Screen) => void; visible: boolean }) {
   const [feed, setFeed] = useState<DailyFeed | null>(todaysFeed());
@@ -170,6 +172,11 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
           <span className="logo-mark">✦</span> Wander
         </div>
         <div className="topbar-actions">
+          {listProfiles().length > 1 && (
+            <button className="icon-btn profile-btn" aria-label={`Profile: ${currentProfile().name}. Switch profile`} onClick={() => go({ kind: 'profiles' })}>
+              <Avatar id={currentProfile().id} name={currentProfile().name} />
+            </button>
+          )}
           {!tv && linkedTv() && (
             <button className="icon-btn" aria-label="TV remote" onClick={() => go({ kind: 'remote' })}>
               📺

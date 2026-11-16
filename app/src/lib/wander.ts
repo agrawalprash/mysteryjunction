@@ -28,6 +28,7 @@ import { AUTO_BUDGET, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetai
 import { askWander, describeVideos, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
 import { getSettings } from './settings.ts';
+import { activeProfile, deleteProfile, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 export const SURPRISES_PER_DAY = 3;
@@ -95,9 +96,17 @@ function fresh(): State {
   };
 }
 
-// Older saves may lack newer fields; fill them in.
-let state: State = { ...fresh(), ...load<Partial<State>>('state', {}) };
-if (!Array.isArray(state.weights) || state.weights.length !== FEATURES.length) state.weights = initialWeights();
+function loadState(): State {
+  // Older saves may lack newer fields; fill them in.
+  const s: State = { ...fresh(), ...load<Partial<State>>(stateKey(), {}) };
+  if (!Array.isArray(s.weights) || s.weights.length !== FEATURES.length) s.weights = initialWeights();
+  return s;
+}
+
+/** The active profile's taste, pool and history. Each profile has its own. */
+let state: State = loadState();
+/** Bumped on every profile switch, so work started for one profile never lands in another's. */
+let generation = 0;
 
 /** One online-learning step for the ranking model. */
 function learn(c: Candidate, y: 0 | 1, weight: number) {
@@ -130,7 +139,7 @@ function persist() {
   if (shownIds.length > 4000) {
     for (const id of shownIds.slice(0, shownIds.length - 4000)) delete state.shownCounts[id];
   }
-  save('state', state);
+  save(stateKey(), state);
 }
 
 export function getState(): Readonly<State> {
@@ -328,7 +337,9 @@ export function newSet(keys: ApiKeys, focus: string, onProgress: (msg: string) =
       return feed;
     }
     if (quotaUsed() + setCost() > AUTO_BUDGET) throw new Error('YouTube’s daily limit is used up and your pool is thin. More tomorrow.');
+    const gen = generation;
     const { found, directions, note } = await gather(keys, focus, onProgress, true);
+    if (gen !== generation) throw new Error('Switched profile while the set was being made.');
     onProgress('Picking your set…');
     const feed = install(found, directions, note, focus);
     afterShowing(keys, found);
@@ -383,16 +394,20 @@ function install(found: Candidate[], directions: Direction[], note: string, focu
 /** Background work after a set is on screen: finish describing, top up the pool, refresh taste. */
 function afterShowing(keys: ApiKeys, found: Candidate[]) {
   const auth = claudeAuth(keys);
+  const gen = generation;
   void (async () => {
     // Describe anything still undescribed (just fetched, or left from before).
     // (Videos described before concept tags existed get tagged too, a batch at a time.)
     const undescribed = [...found, ...state.pool].filter((c) => !c.facets?.concepts).slice(0, MAX_DESCRIBE);
     if (auth && undescribed.length) {
       await describe(undescribed, auth, () => undefined).catch(() => undefined);
+      if (gen !== generation) return;
       mergePool(undescribed);
       persist();
     }
+    if (gen !== generation) return;
     await maybeRefill(keys).catch((e) => console.warn('Refill failed', e));
+    if (gen !== generation) return;
     await maybeRefreshTaste(keys).catch((e) => console.warn('Taste profile refresh failed', e));
   })();
 }
@@ -415,8 +430,10 @@ export function maybeRefill(keys: ApiKeys, force = false): Promise<void> {
   const due = needsRefill(h) || (drift && now - state.lastRefill > 15 * 60 * 1000);
   if (!force && (!due || now - state.lastRefill < REFILL_MIN_GAP)) return Promise.resolve();
   if (quotaUsed() + setCost() > AUTO_BUDGET - SEARCH_RESERVE) return Promise.resolve();
+  const gen = generation;
   refilling = (async () => {
     const { found, directions } = await gather(keys, '', () => undefined, false, true);
+    if (gen !== generation) return;
     mergePool(found);
     for (const d of directions) state.recentTopics.push({ name: d.topic, at: Date.now() });
     state.lastRefill = Date.now();
@@ -460,6 +477,7 @@ export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string)
   if (!auth) throw new Error('Talking to Wander needs an Anthropic key (Settings → Change API keys).');
   onProgress('Claude is listening…');
   const now = Date.now();
+  const gen = generation;
   const r = await askWander(auth, {
     request: text,
     pinned: state.pinned,
@@ -470,6 +488,7 @@ export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string)
     currentFocus: state.feed?.focus ?? '',
   });
 
+  if (gen !== generation) throw new Error('Switched profile while Claude was thinking.');
   // Claude decided it was a plain search: hand it back to be searched, change nothing.
   if (r.search?.trim()) return { reply: r.reply, feed: null, changes: [], search: r.search.trim() };
 
@@ -597,8 +616,10 @@ export async function surprise(keys: ApiKeys, onProgress: (msg: string) => void)
     const recent = new Set(state.recentTopics.map((t) => t.name));
     directions = sampleWithout(WILDCARD_TOPICS, 3, recent).map((t) => ({ topic: t, query: t, tier: 'wildcard', because: 'A wildcard' }));
   }
+  const gen = generation;
   const found = await runDirections(directions, keys, onProgress);
   await describe(found, auth, onProgress);
+  if (gen !== generation) throw new Error('Switched profile while looking for a surprise.');
   mergePool(found);
   // Only use what this surprise just found, so it's genuinely new.
   const items = assembleSurprise(found, ctx(), new Set(feedIds(feed)));
@@ -627,6 +648,7 @@ export function maybeRefreshTaste(keys: ApiKeys, force = false): Promise<TastePr
   const stale = !t || (Date.now() - t.generatedAt > 7 * DAY && state.history.length - t.watchesSeen >= 3);
   if (!force && !(enoughHistory && stale)) return Promise.resolve(t);
   if (force && state.history.length === 0) throw new Error('Watch a few videos first.');
+  const gen = generation;
   tasteRun ??= writeTasteProfile(auth, {
     watches: state.history.slice(-150),
     exits: state.exits.slice(-60),
@@ -635,6 +657,7 @@ export function maybeRefreshTaste(keys: ApiKeys, force = false): Promise<TastePr
     previous: state.taste,
   })
     .then((profile) => {
+      if (gen !== generation) return null;
       state.taste = { ...profile, watchesSeen: state.history.length };
       persist();
       return state.taste;
@@ -736,7 +759,7 @@ export async function search(q: string, keys: ApiKeys): Promise<Candidate[]> {
 }
 
 export function resetLearning() {
-  remove('state');
+  remove(stateKey());
   state = fresh();
   persist();
 }
@@ -772,4 +795,30 @@ export function mergeTold(other: Told): Told {
   void before;
   persist();
   return getTold();
+}
+
+// ---------------------------------------------------------------- profiles
+
+export function currentProfile(): WanderProfile {
+  return activeProfile();
+}
+
+/** Switch to another profile: save this one's data, load theirs, and show their set. */
+export function switchProfile(id: string) {
+  if (id === activeProfile().id) return;
+  persist();
+  setActiveProfileId(id);
+  generation += 1;
+  state = loadState();
+  // Anything in flight belonged to the old profile; let new work start straight away.
+  building = null;
+  refilling = null;
+  tasteRun = null;
+  emitFeedChanged();
+}
+
+/** Delete a profile and what it learned (switching away first if it's the active one). */
+export function removeProfile(id: string, fallbackId: string) {
+  if (id === activeProfile().id) switchProfile(fallbackId);
+  deleteProfile(id);
 }

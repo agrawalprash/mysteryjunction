@@ -486,3 +486,23 @@ body:not(.tv) .screen.remote-clean { padding: 0; }
 .more-np { text-align: center; margin: 2px 0 10px; }
 .sheet .remote-actions { margin: 8px 0; }
 .sheet .row h2, .sheet .row-scroll { padding-left: 0; margin-left: 0; }
+
+/* ---------------------------------------------------------------- profiles */
+.avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #14151a; font-weight: 800; font-size: 14px; flex-shrink: 0; }
+.avatar-big { width: 96px; height: 96px; font-size: 44px; border-radius: 24px; }
+.block { display: block; }
+.profile-picker { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; padding: 24px; box-sizing: border-box; }
+.profile-picker h1 { margin: 0; font-size: 32px; }
+.profile-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 24px; }
+.profile-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 22px; border-radius: 20px; background: transparent; border: 2px solid transparent; color: inherit; font: inherit; cursor: pointer; min-width: 140px; }
+.profile-card:focus, .profile-card:hover { border-color: var(--text); outline: none; }
+.profile-current .avatar-big { box-shadow: 0 0 0 3px var(--text); }
+.profile-name { font-size: 20px; font-weight: 700; }
+.profile-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.profile-chip { display: inline-flex; align-items: center; gap: 8px; }
+.profile-btn { padding: 0; }
+html.tv .profile-picker h1 { font-size: 3rem; }
+html.tv .avatar { width: 2.6rem; height: 2.6rem; font-size: 1.3rem; }
+html.tv .avatar-big { width: 9rem; height: 9rem; font-size: 4.5rem; border-radius: 2.2rem; }
+html.tv .profile-card { min-width: 13rem; padding: 1.6rem 2rem; border-width: 0.3rem; border-radius: 1.8rem; }
+html.tv .profile-name { font-size: 1.9rem; }

@@ -3,6 +3,7 @@
 
 import type { Candidate, Direction, Video } from '../engine/types.ts';
 import { load, localDate, save } from './store.ts';
+import { activeProfile } from './profiles.ts';
 
 const API = 'https://www.googleapis.com/youtube/v3';
 export const DAILY_QUOTA = 10_000;
@@ -64,6 +65,7 @@ export interface SearchOptions {
   order?: 'relevance' | 'viewCount' | 'rating' | 'date';
   maxResults?: number;
   language?: string;
+  safeSearch?: 'moderate' | 'strict';
 }
 
 // ---------------------------------------------------------------- caches
@@ -96,6 +98,8 @@ function cachePut<T>(name: string, k: string, value: T, max = 300) {
 
 /** Search for video IDs (100 units, or free if the same search ran in the last few days). */
 export async function searchIds(q: string, key: string, opts: SearchOptions = {}): Promise<string[]> {
+  // Kid profiles search with YouTube's strict SafeSearch (and keep their own cache entries).
+  if (activeProfile().options.strictSafeSearch) opts = { ...opts, safeSearch: 'strict' };
   const cacheKey = JSON.stringify([q.trim().toLowerCase(), opts]);
   const cached = cacheGet<string[]>('cache-search', cacheKey, SEARCH_TTL);
   if (cached) return cached;
@@ -114,7 +118,7 @@ async function searchIdsUncached(q: string, key: string, opts: SearchOptions): P
       // Same price for 50 results as for 5: take plenty, leftovers feed later sets.
       maxResults: opts.maxResults ?? 40,
       videoEmbeddable: 'true',
-      safeSearch: 'moderate',
+      safeSearch: opts.safeSearch ?? 'moderate',
       videoDuration: opts.duration ?? 'any',
       publishedBefore: opts.publishedBefore,
       publishedAfter: opts.publishedAfter,
