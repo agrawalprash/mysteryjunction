@@ -4,6 +4,11 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 
 interface VoicePlugin {
   listen(opts: { language?: string; prompt?: string }): Promise<{ text: string }>;
+  holdStart(opts: { language?: string }): Promise<void>;
+  holdStop(): Promise<{ text: string; error?: string }>;
+  holdCancel(): Promise<void>;
+  addListener(event: 'holdPartial', fn: (e: { text: string }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'holdReady', fn: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'voiceKey', fn: (e: { keyCode: number }) => void): Promise<PluginListenerHandle>;
 }
 const Voice = registerPlugin<VoicePlugin>('WanderVoice');
@@ -30,4 +35,35 @@ export function onVoiceKey(fn: (keyCode: number) => void): () => void {
   return () => {
     h.then((x) => x.remove());
   };
+}
+
+// ---------------------------------------------------------------- hold to talk
+
+/**
+ * Walkie-talkie style: start listening while a button is held, show words as they come,
+ * and get the final text on release. (Web preview: falls back to a typed prompt on release.)
+ */
+export async function holdStart(onPartial: (text: string) => void, onReady: () => void): Promise<() => void> {
+  if (!Capacitor.isNativePlatform()) {
+    onReady();
+    return () => undefined;
+  }
+  const a = await Voice.addListener('holdPartial', (e) => onPartial(e.text));
+  const b = await Voice.addListener('holdReady', () => onReady());
+  await Voice.holdStart({ language: 'en-US' });
+  return () => {
+    a.remove();
+    b.remove();
+  };
+}
+
+export async function holdStop(): Promise<string> {
+  if (!Capacitor.isNativePlatform()) return window.prompt('What did you say?') ?? '';
+  const r = await Voice.holdStop();
+  if (!r.text && r.error) throw new Error(r.error);
+  return r.text;
+}
+
+export function holdCancel() {
+  if (Capacitor.isNativePlatform()) void Voice.holdCancel();
 }

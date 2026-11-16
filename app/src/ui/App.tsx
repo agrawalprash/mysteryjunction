@@ -291,6 +291,11 @@ export function App() {
     <TvContext.Provider value={tv}>
       {content}
       {keys.youtube && <UpdatePopup tv={tv} />}
+      {!tv && keys.youtube && linkedTv() && ['home', 'search', 'settings'].includes(current.kind) && (
+        <button className="remote-fab" onClick={() => push({ kind: 'remote' })}>
+          📺 Remote
+        </button>
+      )}
       {notice && <div className="toast">{notice}</div>}
     </TvContext.Provider>
   );
