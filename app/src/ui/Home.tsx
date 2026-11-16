@@ -162,7 +162,12 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
               💬
             </button>
           )}
-          <button className="icon-btn" aria-label="Search" onClick={() => go({ kind: 'search' })}>
+          <button
+            className="icon-btn"
+            aria-label="Search"
+            // On the phone: straight into voice, and onto the TV when linked. (The TV's own voice input doesn't work.)
+            onClick={() => go(tv ? { kind: 'search' } : { kind: 'search', target: linkedTv() ? 'tv' : 'here', voice: true })}
+          >
             <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14" /></svg>
           </button>
           <button className="icon-btn" aria-label="Settings" onClick={() => go({ kind: 'settings' })}>

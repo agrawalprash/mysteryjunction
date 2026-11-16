@@ -32,7 +32,7 @@ import { RemoteScreen } from './RemoteScreen.tsx';
 export type Screen =
   | { kind: 'home' }
   | { kind: 'player'; video: Candidate }
-  | { kind: 'search'; target?: 'here' | 'tv' }
+  | { kind: 'search'; target?: 'here' | 'tv'; voice?: boolean }
   | { kind: 'remote' }
   | { kind: 'settings' }
   | { kind: 'setup' };
@@ -232,13 +232,14 @@ export function App() {
             onBack={back}
             open={(v) => push({ kind: 'player', video: v })}
             initialTarget={current.target}
+            startWithVoice={current.voice}
           />
         )}
         {current.kind === 'remote' && (
           <RemoteScreen
             keys={keys}
             onBack={back}
-            openSearch={() => push({ kind: 'search', target: 'tv' })}
+            openSearch={() => push({ kind: 'search', target: 'tv', voice: true })}
             openDiagnose={() => push({ kind: 'settings' })}
           />
         )}
