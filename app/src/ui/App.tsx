@@ -176,6 +176,14 @@ export function App() {
           toast(`📱 “${msg.text}”`);
           const out = await ask(k, msg.text, () => undefined);
           toast(`✦ ${out.reply}`);
+          if (out.search) {
+            // Claude read it as a search: run it and show the results.
+            const results = await search(out.search, k);
+            preloadSearch(out.search, results);
+            setSearchVersion((n) => n + 1);
+            setStack((st) => (st[st.length - 1].kind === 'search' ? st : [...st, { kind: 'search' }]));
+            return { reply: out.reply, changes: [], searched: out.search, count: results.length };
+          }
           return { reply: out.reply, changes: out.changes, newSet: !!out.feed, notice: out.notice };
         }
       }

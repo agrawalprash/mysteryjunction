@@ -5,12 +5,18 @@
 
 export type Dir = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight';
 
+/** While holding: where the finger has slid. Down = ask Claude; anywhere else = search. */
+export type HoldZone = 'auto' | 'ask' | 'search';
+
 export interface GestureHandlers {
   step(dir: Dir): void;
   tap(): void;
   holdStart(): void;
-  holdEnd(): void;
+  holdZone?(zone: HoldZone): void;
+  holdEnd(zone: HoldZone): void;
 }
+
+export const ZONE_PX = 70;
 
 export const STEP_PX = 56;
 export const MOVE_SLOP_PX = 14;
@@ -31,6 +37,7 @@ export function createGestures(h: GestureHandlers, timers = defaultTimers) {
   let holding = false;
   let active = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let zone: HoldZone = 'auto';
 
   return {
     down(x: number, y: number) {
@@ -41,6 +48,7 @@ export function createGestures(h: GestureHandlers, timers = defaultTimers) {
       axis = null;
       moved = false;
       holding = false;
+      zone = 'auto';
       timer = timers.set(() => {
         if (active && !moved) {
           holding = true;
@@ -49,9 +57,18 @@ export function createGestures(h: GestureHandlers, timers = defaultTimers) {
       }, HOLD_MS);
     },
     move(x: number, y: number) {
-      if (!active || holding) return;
+      if (!active) return;
       const dx = x - startX;
       const dy = y - startY;
+      if (holding) {
+        // Sliding while talking picks where it goes.
+        const z: HoldZone = dy > ZONE_PX ? 'ask' : 'auto';
+        if (z !== zone) {
+          zone = z;
+          h.holdZone?.(z);
+        }
+        return;
+      }
       if (!moved && Math.hypot(dx, dy) > MOVE_SLOP_PX) {
         moved = true;
         timers.clear(timer);
@@ -69,13 +86,13 @@ export function createGestures(h: GestureHandlers, timers = defaultTimers) {
       if (!active) return;
       active = false;
       timers.clear(timer);
-      if (holding) h.holdEnd();
+      if (holding) h.holdEnd(zone);
       else if (!moved) h.tap();
     },
     cancel() {
       active = false;
       timers.clear(timer);
-      if (holding) h.holdEnd();
+      if (holding) h.holdEnd(zone);
     },
   };
 }

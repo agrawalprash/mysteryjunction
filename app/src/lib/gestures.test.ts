@@ -6,7 +6,7 @@ function setup() {
   const log: string[] = [];
   let pending: (() => void) | null = null;
   const g = createGestures(
-    { step: (d) => log.push(d), tap: () => log.push('tap'), holdStart: () => log.push('holdStart'), holdEnd: () => log.push('holdEnd') },
+    { step: (d) => log.push(d), tap: () => log.push('tap'), holdStart: () => log.push('holdStart'), holdEnd: (z) => log.push(`holdEnd:${z}`) },
     { set: ((fn: () => void) => ((pending = fn), 1)) as unknown as typeof setTimeout, clear: (() => (pending = null)) as unknown as typeof clearTimeout },
   );
   return { g, log, fireTimer: () => pending?.() };
@@ -42,7 +42,7 @@ test('press and hold starts voice; release ends it (no tap, no steps)', () => {
   fireTimer();
   g.move(140, 100); // wobble while talking is ignored
   g.up();
-  assert.deepEqual(log, ['holdStart', 'holdEnd']);
+  assert.deepEqual(log, ['holdStart', 'holdEnd:auto']);
 });
 
 test('moving before the hold delay is a swipe, not voice', () => {
@@ -52,4 +52,19 @@ test('moving before the hold delay is a swipe, not voice', () => {
   fireTimer(); // cleared already; nothing should happen
   g.up();
   assert.deepEqual(log, ['ArrowDown']);
+});
+
+test('while holding, sliding down asks Claude; sliding up or staying put is a search', () => {
+  const a = setup();
+  a.g.down(100, 300);
+  a.fireTimer();
+  a.g.move(100, 400);
+  a.g.up();
+  assert.deepEqual(a.log, ['holdStart', 'holdEnd:ask']);
+  const b = setup();
+  b.g.down(100, 300);
+  b.fireTimer();
+  b.g.move(100, 200);
+  b.g.up();
+  assert.deepEqual(b.log, ['holdStart', 'holdEnd:auto']);
 });
