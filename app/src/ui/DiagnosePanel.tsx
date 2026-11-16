@@ -4,7 +4,7 @@ import { claudeAuth, type ApiKeys } from '../lib/keys.ts';
 import { DEFAULT_SYMPTOMS } from '../lib/diagnostics.ts';
 import { diagSnapshot, sayDiag, startDiag, stopDiag, subscribeDiag, type DiagSnapshot } from '../lib/diagStore.ts';
 import { linkedTv, sendToTv } from '../lib/link.ts';
-import { listen } from '../lib/voice.ts';
+import { HoldToTalk } from './HoldToTalk.tsx';
 import { useTv } from './App.tsx';
 
 const TOOL_LABEL: Record<string, string> = {
@@ -89,14 +89,12 @@ function useDiag(target: Target) {
   return { snap, linkError, act };
 }
 
-/** A Claude Code–style session that investigates a device with read-only tools. */
+/** A Claude Code–style session that investigates a device with read-only tools. Talk to it from the phone. */
 export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
   const tv = useTv();
-  const tvLink = !tv ? linkedTv() : null;
-  const [target, setTarget] = useState<Target>(tvLink ? 'tv' : 'here');
+  // A linked phone diagnoses the TV; otherwise the device diagnoses itself.
+  const target: Target = !tv && linkedTv() ? 'tv' : 'here';
   const { snap, linkError, act } = useDiag(target);
-  const [symptoms, setSymptoms] = useState(DEFAULT_SYMPTOMS);
-  const [input, setInput] = useState('');
   const consoleRef = useRef<HTMLDivElement>(null);
   const lastCount = useRef(0);
   const { steps, pending, busy, active } = snap;
@@ -113,7 +111,7 @@ export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
     if (pending) window.setTimeout(() => document.querySelector<HTMLElement>('.diag-question button')?.focus(), 80);
   }, [pending?.question]);
 
-  const start = () => {
+  const start = (symptoms: string) => {
     if (target === 'tv') return act('start', symptoms);
     const auth = claudeAuth(keys);
     if (auth) startDiag(auth, symptoms);
@@ -121,61 +119,38 @@ export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
   const send = (text: string) => {
     const t = text.trim();
     if (!t) return;
-    setInput('');
     if (target === 'tv') act('say', t);
     else sayDiag(t);
   };
   const stop = () => (target === 'tv' ? act('stop') : stopDiag());
-
-  const speak = async () => {
-    try {
-      const said = await listen('Say it to Claude');
-      if (said) setInput((prev) => (prev ? `${prev} ${said}` : said));
-    } catch {
-      /* typing still works */
-    }
-  };
-
-  const canRunHere = Capacitor.isNativePlatform() && !!keys.anthropic;
+  const canRun = target === 'tv' || (Capacitor.isNativePlatform() && !!keys.anthropic);
 
   return (
     <section className="panel">
-      <h3>Diagnose with Claude</h3>
+      <h3>Diagnose {target === 'tv' ? 'the TV' : 'this device'} with Claude</h3>
       <p className="muted small">
-        A Claude Code–style session: Claude runs read-only checks on the device (shell commands, app permissions, voice settings, network tests,
-        test phrases spoken by the TV itself, a mic probe), thinks out loud, and keeps going until it has evidence. Message it at any time. Nothing
-        is changed. A run costs roughly 50 cents to $1.
+        {tv
+          ? 'Claude runs read-only checks here and explains what it finds. Talk to it from your phone: Remote → ⋯ → Diagnose TV.'
+          : 'Claude runs read-only checks and explains what it finds. Hold the button and say what’s wrong; hold again any time to tell it more.'}
       </p>
-      {tvLink && (
-        <div className="target-row">
-          <span className="muted small">Diagnose</span>
-          <button className={`chip${target === 'tv' ? ' chip-on' : ''}`} onClick={() => setTarget('tv')}>
-            📺 TV (type here)
-          </button>
-          <button className={`chip${target === 'here' ? ' chip-on' : ''}`} onClick={() => setTarget('here')}>
-            This phone
-          </button>
-        </div>
-      )}
-      {!active && (
-        <>
-          <label className="small muted">What’s wrong</label>
-          <textarea value={symptoms} onChange={(e) => setSymptoms(e.target.value)} />
-        </>
-      )}
+
       <div className="end-actions left">
-        <button className="btn" onClick={start} disabled={target === 'here' && !canRunHere}>
-          {active ? 'New session' : 'Start'}
-        </button>
+        {!tv && canRun && (
+          <HoldToTalk label={active ? 'Hold to talk to Claude' : 'Hold and say what’s wrong'} onSaid={(t) => (active ? send(t) : start(t))} />
+        )}
+        {tv && !active && canRun && (
+          <button className="btn btn-ghost" onClick={() => start(DEFAULT_SYMPTOMS)}>
+            Run a general check
+          </button>
+        )}
         {busy && (
           <button className="btn btn-ghost" onClick={stop}>
             Stop
           </button>
         )}
       </div>
-      {target === 'here' && !Capacitor.isNativePlatform() && <p className="muted small">Only works in the installed app.</p>}
-      {linkError && <p className="small error-text">{linkError}</p>}
-      {target === 'tv' && !active && !linkError && <p className="muted small">Wander needs to be open on the TV.</p>}
+      {!canRun && <p className="muted small">Needs the installed app and an Anthropic key.</p>}
+      {linkError && <p className="small error-text">Can’t reach the TV. Is Wander open on it?</p>}
 
       {steps.length > 0 && (
         <div className="term" ref={consoleRef}>
@@ -226,29 +201,6 @@ export function DiagnosePanel({ keys }: { keys: ApiKeys }) {
         </div>
       )}
 
-      {active && (
-        <div className="ask-row term-input">
-          {!tv && (
-            <button className="btn btn-ghost" onClick={speak}>
-              🎤
-            </button>
-          )}
-          <form
-            className="ask-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              send(input);
-            }}
-          >
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={pending ? 'Answer…' : busy ? 'Message Claude (it reads it at the next step)…' : 'Message Claude…'}
-              enterKeyHint="send"
-            />
-          </form>
-        </div>
-      )}
     </section>
   );
 }

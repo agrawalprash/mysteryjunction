@@ -506,3 +506,20 @@ html.tv .avatar { width: 2.6rem; height: 2.6rem; font-size: 1.3rem; }
 html.tv .avatar-big { width: 9rem; height: 9rem; font-size: 4.5rem; border-radius: 2.2rem; }
 html.tv .profile-card { min-width: 13rem; padding: 1.6rem 2rem; border-width: 0.3rem; border-radius: 1.8rem; }
 html.tv .profile-name { font-size: 1.9rem; }
+
+/* ---------------------------------------------------------------- profile report */
+.report-pad { padding: 0 16px; }
+.report .target-row { padding: 0 16px; margin-bottom: 10px; }
+.report-head { display: flex; align-items: center; gap: 16px; }
+.report-head h2 { margin: 0 0 4px; }
+.report-head .avatar-big { width: 64px; height: 64px; font-size: 30px; border-radius: 18px; }
+.chips-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips-wrap .tag { margin-left: 0; }
+.tag-big { font-size: 14px; padding: 4px 10px; border-radius: 999px; color: var(--text); }
+.report-recent { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.report-recent li { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.report .ask-form { margin-top: 10px; }
+.report .ask-form input { width: 100%; }
+.hold-talk { display: inline-flex; flex-direction: column; gap: 4px; }
+.hold-talk-btn { touch-action: none; user-select: none; -webkit-user-select: none; }
+.hold-talk-on { background: var(--accent); color: #fff; }

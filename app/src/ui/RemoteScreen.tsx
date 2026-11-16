@@ -35,7 +35,17 @@ function tick(ms = 12) {
  * Remote mode: the phone as a gesture remote for Wander on the TV.
  * Swipe = arrows, tap = OK, press and hold = voice search (sent on release).
  */
-export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; onBack: () => void; openDiagnose: () => void }) {
+export function RemoteScreen({
+  keys,
+  onBack,
+  openDiagnose,
+  openReport,
+}: {
+  keys: ApiKeys;
+  onBack: () => void;
+  openDiagnose: () => void;
+  openReport: () => void;
+}) {
   const tv = linkedTv();
   const [state, setState] = useState<TvState | null>(null);
   const [feed, setFeed] = useState<DailyFeed | null>(null);
@@ -275,6 +285,16 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
               </button>
               <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'newSet' }, '↻ New set on the TV.'))}>
                 ↻ New set
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setMore(false);
+                  setOverlayCloser(null);
+                  openReport();
+                }}
+              >
+                📊 Profile reports
               </button>
               <button className="btn btn-ghost" onClick={openDiagnose}>
                 🩺 Diagnose TV
