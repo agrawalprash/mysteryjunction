@@ -18,6 +18,7 @@ const TIER_EXPLAIN: Record<Candidate['tier'], string> = {
   search: 'From something you searched for.',
   focus: 'Part of what you asked Wander for.',
   custom: 'From one of the rows you asked Wander to add.',
+  channel: 'New from a channel whose videos you watch to the end.',
 };
 
 const PLAYER_ERRORS: Record<number, string> = {

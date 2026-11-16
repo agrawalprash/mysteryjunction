@@ -177,6 +177,28 @@ export interface FeedOptions {
   /** What the viewer asked for; gets its own row at the top. */
   focus?: string;
   customRows?: CustomRow[];
+  /** Share of the set drawn from what the viewer already loves (0.2 mostly new … 0.6 mostly familiar). */
+  familiar?: number;
+}
+
+/** Roughly how many main videos a set has. */
+const SET_SIZE = 36;
+
+/** Row sizes for a set: the familiar share goes to "love" and "channels"; the rest stays varied. */
+export function rowSizes(familiar = 0.4) {
+  const fam = Math.round(SET_SIZE * Math.min(0.7, Math.max(0, familiar)));
+  const channels = Math.min(8, Math.ceil(fam / 2));
+  const love = Math.min(10, fam - channels);
+  const rest = SET_SIZE - channels - love;
+  return {
+    channels,
+    love,
+    core: Math.max(4, Math.round(rest * 0.3)),
+    adjacent: Math.max(3, Math.round(rest * 0.25)),
+    wildcard: Math.max(3, Math.round(rest * 0.2)),
+    gems: Math.max(2, Math.round(rest * 0.12)),
+    archive: Math.max(2, Math.round(rest * 0.13)),
+  };
 }
 
 export function assembleFeed(pool: Candidate[], ctx: FeedContext, date: string, opts: FeedOptions = {}): DailyFeed {
@@ -185,6 +207,7 @@ export function assembleFeed(pool: Candidate[], ctx: FeedContext, date: string, 
   const main = pool.filter((c) => c.tier !== 'shorts' && eligible(c, ctx));
   const byTier = (tier: Candidate['tier']) => main.filter((c) => c.tier === tier);
   const coldStart = coreInterests(ctx.profile, ctx.now).length === 0;
+  const size = rowSizes(opts.familiar);
 
   const rows: FeedRow[] = [];
   const addRow = (row: FeedRow) => {
@@ -200,13 +223,36 @@ export function assembleFeed(pool: Candidate[], ctx: FeedContext, date: string, 
     });
   }
 
+  // The familiar part: more of what this viewer clearly loves, and new uploads from channels they finish.
+  if (!coldStart || byTier('channel').length) {
+    const affinity = (c: Candidate) => (ctx.conceptProfile ? conceptAffinity(ctx.conceptProfile, conceptsOf(c), ctx.now) : 0);
+    addRow({
+      id: 'channels',
+      title: 'From channels you like',
+      subtitle: 'New from channels whose videos you finish',
+      items: pick(byTier('channel'), size.channels, used, score, { channelCap: 2, topicCap: 4 }),
+    });
+    addRow({
+      id: 'love',
+      title: 'More of what you love',
+      subtitle: 'Close to what you watch to the end',
+      items: pick(
+        main.filter((c) => affinity(c) > 0.15),
+        size.love,
+        used,
+        (c) => score(c) * Math.pow(1 + Math.min(2, affinity(c)), 2),
+        { channelCap: 1, topicCap: 4 },
+      ),
+    });
+  }
+
   addRow({
     id: 'core',
     title: coldStart ? 'A taste of everything' : 'Picked for you',
     subtitle: coldStart
       ? 'Sampling widely while Wander learns what you like'
       : 'More of what you enjoy, from corners you haven’t seen',
-    items: pick(byTier('core'), opts.focus ? 6 : 8, used, score),
+    items: pick(byTier('core'), opts.focus ? Math.max(3, size.core - 2) : size.core, used, score),
   });
   for (const row of opts.customRows ?? []) {
     addRow({
@@ -220,25 +266,25 @@ export function assembleFeed(pool: Candidate[], ctx: FeedContext, date: string, 
     id: 'adjacent',
     title: 'Next door',
     subtitle: 'One step away from your interests',
-    items: pick(byTier('adjacent'), 7, used, score),
+    items: pick(byTier('adjacent'), size.adjacent, used, score),
   });
   addRow({
     id: 'wildcard',
     title: 'Something completely different',
     subtitle: 'Deliberate wildcards. Skip freely.',
-    items: pick(byTier('wildcard'), 6, used, score),
+    items: pick(byTier('wildcard'), size.wildcard, used, score),
   });
   addRow({
     id: 'gems',
     title: 'Hidden gems',
     subtitle: 'Few views, lots of love',
-    items: pick(main.filter(isHiddenGem), 5, used, (c) => score(c) * (1 + likeRatio(c) * 10)),
+    items: pick(main.filter(isHiddenGem), size.gems, used, (c) => score(c) * (1 + likeRatio(c) * 10)),
   });
   addRow({
     id: 'archive',
     title: 'From the archive',
     subtitle: 'Older videos that still hold up',
-    items: pick(main.filter((c) => c.tier === 'archive' || isArchive(c)), 5, used, score),
+    items: pick(main.filter((c) => c.tier === 'archive' || isArchive(c)), size.archive, used, score),
   });
 
   const again = watchAgainCandidates(ctx.history, ctx.now)

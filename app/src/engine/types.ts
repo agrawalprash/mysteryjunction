@@ -1,7 +1,7 @@
 // Shared data shapes for the recommendation engine.
 
 /** How far a recommendation is from what the viewer already likes. */
-export type Tier = 'core' | 'adjacent' | 'wildcard' | 'archive' | 'shorts' | 'search' | 'focus' | 'custom';
+export type Tier = 'core' | 'adjacent' | 'wildcard' | 'archive' | 'shorts' | 'search' | 'focus' | 'custom' | 'channel';
 
 export interface Video {
   id: string;

@@ -131,6 +131,18 @@ export function ProfilesPanel({ onSwitched }: { onSwitched: () => void }) {
           <option value="kid">{PRESET_LABELS.kid}</option>
         </select>
       </label>
+      <label className="field">
+        <span>
+          Familiar vs new
+          <span className="muted small block">How much of each set comes from what {me.name} already loves.</span>
+        </span>
+        <select value={String(me.options.familiar)} onChange={(e) => setOpt({ familiar: Number(e.target.value) })}>
+          <option value="0.2">Mostly new (20% familiar)</option>
+          <option value="0.4">Balanced (40%)</option>
+          <option value="0.5">Half and half</option>
+          <option value="0.6">Mostly familiar (60%)</option>
+        </select>
+      </label>
       <Toggle
         label="Playful Claude"
         hint="Claude plans, suggests and replies for a young child: safe, curious, creative, simple words."

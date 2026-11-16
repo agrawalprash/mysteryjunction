@@ -226,6 +226,21 @@ export async function fetchDirection(d: Direction, key: string, language?: strin
   return videos.map((v) => ({ ...v, topic: d.topic, tier: d.tier, because: d.because, query: d.query, fetchedAt: now, rowId: d.rowId }));
 }
 
+/** Recent uploads from channels by id (about 1 unit per channel, cached for a day), plus details. */
+export async function channelUploads(channelIds: string[], key: string, perChannel = 6): Promise<Video[]> {
+  const ids: string[] = [];
+  for (const id of channelIds) {
+    if (!id.startsWith('UC')) continue;
+    try {
+      // A channel's uploads playlist is its id with "UU" in place of "UC".
+      ids.push(...sample((await recentUploads('UU' + id.slice(2), key)).slice(0, 25), perChannel));
+    } catch (e) {
+      if (e instanceof YouTubeError && e.status === 403) throw e;
+    }
+  }
+  return ids.length ? videoDetails([...new Set(ids)], key) : [];
+}
+
 /** Cheap call (1 unit) to check a key works. */
 export async function testKey(key: string): Promise<void> {
   await call('videos', { part: 'id', id: 'jNQXAC9IVRw' }, key, 1);
