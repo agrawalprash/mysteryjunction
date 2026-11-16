@@ -446,3 +446,13 @@ body.tv .list-title { margin-left: 0; font-size: 1.4rem; }
   background: var(--brand); color: #0f0f0f; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); cursor: pointer;
 }
 body:not(.tv) .screen { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+.touchpad { position: relative; overflow: hidden; }
+.touchpad-voice { position: static; }
+.zone { position: absolute; left: 0; right: 0; padding: 14px; color: var(--muted); font-size: 15px; }
+.zone-top { top: 0; }
+.zone-bottom { bottom: 0; }
+.zone-on { color: #0f0f0f; background: var(--brand); font-weight: 700; }
+.zone-top.zone-on { border-radius: 20px 20px 0 0; }
+.zone-bottom.zone-on { border-radius: 0 0 20px 20px; }
+.wrong-chip { display: inline-block; margin: 6px 0 0 0; font-size: 13px; padding: 5px 10px; }
+.touchpad-hint .small { max-width: 80%; }

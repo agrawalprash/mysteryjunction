@@ -355,6 +355,9 @@ export async function writeTasteProfile(auth: ClaudeAuth, input: TasteInput): Pr
 
 const Ask = z.object({
   reply: z.string().describe('1–2 short, warm sentences to the viewer saying what you are doing. No questions back.'),
+  search: z
+    .string()
+    .describe('If the viewer simply wants to find specific videos (a title, person, channel, event or how-to), the YouTube search to run; otherwise empty. When set, leave new_set false and change nothing else.'),
   new_set: z.boolean().describe('Build a fresh set of videos now.'),
   focus: z.string().describe('What the new set should centre on (e.g. "music: live sessions and world music"). Empty if none.'),
   focus_concepts: z

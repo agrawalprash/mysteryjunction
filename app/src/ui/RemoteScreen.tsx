@@ -4,7 +4,8 @@ import { linkedTv, sendToTv, type LinkMessage } from '../lib/link.ts';
 import type { NowPlaying } from '../lib/nowPlaying.ts';
 import { formatDuration } from '../lib/format.ts';
 import { holdCancel, holdStart, holdStop } from '../lib/voice.ts';
-import { createGestures } from '../lib/gestures.ts';
+import { createGestures, type HoldZone } from '../lib/gestures.ts';
+import { routeUtterance, type Route } from '../lib/route.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { AskSheet } from './AskSheet.tsx';
 import type { ApiKeys } from '../lib/keys.ts';
@@ -20,7 +21,7 @@ interface TvState {
 }
 
 type Key = Extract<LinkMessage, { type: 'key' }>['key'];
-type VoiceMode = 'search' | 'ask';
+type VoiceMode = HoldZone;
 
 /** A short buzz, like a physical remote's click. */
 function tick(ms = 12) {
@@ -45,6 +46,8 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
   const [asking, setAsking] = useState(false);
   const [more, setMore] = useState(false);
   const [flash, setFlash] = useState('');
+  // The last thing said and where it went, for "Wrong? …" corrections.
+  const [last, setLast] = useState<{ text: string; route: Route } | null>(null);
   const feedVersion = useRef(-1);
 
   const refresh = async () => {
@@ -104,30 +107,42 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
     });
   };
 
-  const endVoice = async () => {
+  const endVoice = async (zone: HoldZone = modeRef.current) => {
     const cleanup = await starting.current;
     starting.current = null;
     if (!cleanup) return;
     tick(18);
-    const mode = modeRef.current;
     try {
       const said = (await holdStop()).trim();
       setVoice(null);
       if (!said) return;
-      if (mode === 'search') {
-        setStatus(`🔎 “${said}” → searching on the TV…`);
-        const r = (await sendToTv({ type: 'search', q: said })) as { count?: number };
-        setStatus(`📺 ${r.count ?? ''} results for “${said}”. Swipe to pick, tap to play.`);
-      } else {
-        setStatus(`✦ “${said}” → asking Claude on the TV…`);
-        const r = (await sendToTv({ type: 'ask', text: said })) as { reply?: string; changes?: string[] };
-        setStatus(`✦ ${r.reply ?? 'Done.'}${r.changes?.length ? ` (${r.changes.join(', ')})` : ''}`);
-      }
+      // Slid up = Claude, slid down = search, otherwise Wander decides from the words.
+      const route: Route = zone === 'ask' ? 'ask' : zone === 'search' ? 'search' : routeUtterance(said);
+      await deliver(said, route);
     } catch (e) {
       setVoice(null);
       setStatus(`✗ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       cleanup();
+    }
+  };
+
+  /** Send what was said to the TV as a search or as a request to Claude. */
+  const deliver = async (said: string, route: Route) => {
+    setLast({ text: said, route });
+    try {
+      if (route === 'search') {
+        setStatus(`🔎 Searching: “${said}”…`);
+        const r = (await sendToTv({ type: 'search', q: said })) as { count?: number };
+        setStatus(`🔎 ${r.count ?? ''} results for “${said}” on the TV. Swipe to pick, tap to play.`);
+      } else {
+        setStatus(`✦ Asking Claude: “${said}”…`);
+        const r = (await sendToTv({ type: 'ask', text: said })) as { reply?: string; changes?: string[]; searched?: string };
+        if (r.searched) setLast({ text: said, route: 'search' });
+        setStatus(`✦ ${r.reply ?? 'Done.'}${r.changes?.length ? ` (${r.changes.join(', ')})` : ''}`);
+      }
+    } catch (e) {
+      setStatus(`✗ ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -145,15 +160,18 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
       createGestures({
         step: (d) => key(d),
         tap: () => key('Enter'),
-        holdStart: () => startVoice('search'),
-        holdEnd: () => void endVoice(),
+        holdStart: () => startVoice('auto'),
+        holdZone: (z) => {
+          modeRef.current = z;
+          tick(8);
+          setVoice((v) => (v ? { ...v, mode: z } : v));
+        },
+        holdEnd: (z) => void endVoice(z),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
-  // A button that's an Ask on tap (opens the panel) and hold-to-talk to Claude on long press.
-  const askHold = useRef<{ timer?: number; held: boolean }>({ held: false });
 
   const np = state?.nowPlaying;
 
@@ -173,11 +191,18 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
       <div className="remote-status-line">
         {voice ? (
           <span className="voice-live">
-            {voice.mode === 'ask' ? '✦ ' : '🎤 '}
+            {voice.mode === 'ask' ? '✦ ' : voice.mode === 'search' ? '🔎 ' : '🎤 '}
             {voice.text || (voice.ready ? 'Listening… speak now' : 'Starting the mic…')}
           </span>
         ) : status ? (
-          <span>{status}</span>
+          <span>
+            {status}
+            {last && !status.startsWith('✗') && (
+              <button className="chip wrong-chip" onClick={() => deliver(last.text, last.route === 'search' ? 'ask' : 'search')}>
+                Wrong? {last.route === 'search' ? 'Ask Claude instead' : 'Search instead'}
+              </button>
+            )}
+          </span>
         ) : np ? (
           <span className="muted">
             ▶ {np.title} · {formatDuration(Math.round(np.time))} / {formatDuration(Math.round(np.duration))}
@@ -200,15 +225,24 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
       >
         {voice ? (
           <div className="touchpad-voice">
-            <div className="touchpad-mic">{voice.mode === 'ask' ? '✦' : '🎤'}</div>
-            <div>Release to {voice.mode === 'ask' ? 'ask Claude' : 'search'}</div>
+            <div className={`zone zone-top${voice.mode === 'ask' ? ' zone-on' : ''}`}>↑ ✦ Ask Claude</div>
+            <div className="touchpad-mic">{voice.mode === 'ask' ? '✦' : voice.mode === 'search' ? '🔎' : '🎤'}</div>
+            <div>
+              {voice.mode === 'ask'
+                ? 'Release to ask Claude'
+                : voice.mode === 'search'
+                  ? 'Release to search'
+                  : 'Release: Wander decides (search or Claude)'}
+            </div>
+            <div className={`zone zone-bottom${voice.mode === 'search' ? ' zone-on' : ''}`}>↓ 🔎 Search</div>
           </div>
         ) : (
           <div className="touchpad-hint">
             <div className="touchpad-mic">🎤</div>
             <div>
-              <b>Press and hold</b> to search by voice
+              <b>Hold and speak</b>: a search, or anything for Claude
             </div>
+            <div className="muted small">“Hans Zimmer live” · “something calm tonight” · “add a row for jazz”</div>
             <div className="muted small">Swipe to move · Tap for OK</div>
           </div>
         )}
@@ -218,35 +252,19 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
         <button className="btn btn-ghost" onClick={() => key('Back')}>↩ Back</button>
         <button
           className="btn ask-hold"
-          onPointerDown={() => {
-            askHold.current.held = false;
-            askHold.current.timer = window.setTimeout(() => {
-              askHold.current.held = true;
-              startVoice('ask');
-            }, 300);
+          onClick={() => {
+            setAsking(true);
+            setOverlayCloser(() => setAsking(false));
           }}
-          onPointerUp={() => {
-            clearTimeout(askHold.current.timer);
-            if (askHold.current.held) void endVoice();
-            else {
-              setAsking(true);
-              setOverlayCloser(() => setAsking(false));
-            }
-          }}
-          onPointerCancel={() => {
-            clearTimeout(askHold.current.timer);
-            if (askHold.current.held) void endVoice();
-          }}
-          onContextMenu={(e) => e.preventDefault()}
         >
-          ✦ Ask
+          ✦ Ideas
         </button>
         <button className="btn btn-ghost" onClick={() => key('Home')}>⌂ Home</button>
         <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'player', action: 'toggle' }))}>
           {np?.playing ? '⏸' : '⏯'}
         </button>
       </div>
-      <p className="muted small remote-tip">Hold ✦ Ask to talk to Claude · tap it for suggestions</p>
+      <p className="muted small remote-tip">While holding: slide ↑ to make sure it goes to Claude, ↓ for a plain search</p>
 
       <button className="more-toggle" onClick={() => setMore((m) => !m)}>
         {more ? '▴ Less' : '▾ More'}

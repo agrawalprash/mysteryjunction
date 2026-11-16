@@ -450,6 +450,8 @@ export interface AskOutcome {
   changes: string[];
   /** Set when Claude's changes were saved but a new set couldn't be made (e.g. quota). */
   notice?: string;
+  /** Claude decided this was really a search: what to search for. */
+  search?: string;
 }
 
 /** Hand what the viewer said to Claude, apply what it decides, and make a new set if needed. */
@@ -467,6 +469,9 @@ export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string)
     interests: coreInterests(state.profile, now).map((t) => t.name),
     currentFocus: state.feed?.focus ?? '',
   });
+
+  // Claude decided it was a plain search: hand it back to be searched, change nothing.
+  if (r.search?.trim()) return { reply: r.reply, feed: null, changes: [], search: r.search.trim() };
 
   const changes: string[] = [];
   const lower = (x: string) => x.trim().toLowerCase();
