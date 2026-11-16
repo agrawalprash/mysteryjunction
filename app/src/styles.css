@@ -206,8 +206,8 @@ body.tv .row { margin-top: 2rem; }
 body.tv .row h2 { margin: 0; font-size: 1.75rem; }
 body.tv .row-sub { margin: 0.25rem 0 0.875rem; font-size: 1.125rem; }
 body.tv .row-scroll { padding: 0.625rem 0.375rem 0.875rem; gap: 1.375rem; scroll-padding-inline: 3rem; }
-body.tv .card-row { flex: 0 0 21.25rem; }
-body.tv .card-short { flex: 0 0 10.625rem; }
+body.tv .card-row { flex: 0 0 25.5rem; }
+body.tv .card-short { flex: 0 0 12.75rem; }
 body.tv .card-title { font-size: 1.25rem; }
 body.tv .card-channel, body.tv .card-meta, body.tv .card-because { font-size: 1rem; }
 body.tv .planner-note { margin: 0.25rem 0 0; font-size: 1.125rem; }
@@ -241,7 +241,7 @@ body.tv .card-list { padding: 0.625rem 0; }
 /* Setup on TV */
 body.tv .setup { max-width: 56.25rem; }
 body.tv .setup input { font-size: 1.375rem; }
-body.tv .card-list .thumb { flex: 0 0 22.5rem; }
+body.tv .card-list .thumb { flex: 0 0 26rem; }
 body.tv .card-list { padding: 0.625rem 0.375rem; }
 body.tv .related h3 { font-size: 1.625rem; margin: 1.75rem 0 0.5rem; }
 
@@ -379,3 +379,13 @@ body.tv .term { font-size: 1.05rem; }
 .np-controls { display: flex; gap: 8px; flex-wrap: wrap; }
 .remote-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 16px; }
 .remote-actions .btn { width: 100%; }
+.pull-indicator {
+  display: flex; align-items: flex-end; justify-content: center; overflow: hidden;
+  color: var(--muted); font-size: 14px; padding-bottom: 6px;
+}
+.icon-btn:disabled { opacity: 0.4; }
+.suggest-title { margin: 10px 0 0; }
+.chip-new { border: 1px solid var(--good); }
+.chip-mood { border: 1px solid var(--accent-2); }
+.list-title { margin: 14px 16px 2px; font-size: 15px; color: var(--muted); }
+body.tv .list-title { margin-left: 0; font-size: 1.4rem; }

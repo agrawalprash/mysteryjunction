@@ -74,6 +74,8 @@ export interface PlannerInput {
   customRows: CustomRow[];
   /** What the viewer asked for right now, e.g. "music". */
   focus: string;
+  /** A small background top-up of the app's video pool rather than a whole set. */
+  refill?: boolean;
   language: string;
 }
 
@@ -151,7 +153,8 @@ function toDirections(items: z.infer<typeof Item>[], tier: Direction['tier'], ma
 }
 
 /** How many searches of each kind one set uses (100 YouTube quota units each). */
-export function planShape(input: Pick<PlannerInput, 'focus' | 'customRows'>) {
+export function planShape(input: Pick<PlannerInput, 'focus' | 'customRows' | 'refill'>) {
+  if (input.refill) return { focus: 0, core: 3, adjacent: 3, wildcard: 3, archive: 1, shorts: 2, perCustomRow: 1 };
   return input.focus
     ? { focus: 5, core: 3, adjacent: 4, wildcard: 4, archive: 1, shorts: 3, perCustomRow: 2 }
     : { focus: 0, core: 5, adjacent: 5, wildcard: 5, archive: 2, shorts: 3, perCustomRow: 2 };
@@ -177,7 +180,11 @@ export async function planDay(auth: ClaudeAuth, input: PlannerInput): Promise<{ 
     messages: [
       {
         role: 'user',
-        content: `${describeViewer(input)}\n\nPlan the next set: ${ask}.`,
+        content: `${describeViewer(input)}\n\n${
+          input.refill
+            ? `This is a background top-up of the app's pool of candidate videos, steered by what the viewer watched most recently. Lean on channels (cheap) and avoid directions already covered recently. Plan: ${ask}.`
+            : `Plan the next set: ${ask}.`
+        }`,
       },
     ],
   });
@@ -227,17 +234,21 @@ const Tag = z.object({
   pace: z.enum(['calm', 'moderate', 'energetic']),
   depth: z.enum(['light', 'medium', 'deep']),
   clickbait: z.boolean().describe('True if the title/description look sensational, misleading or low-effort.'),
+  concepts: z
+    .array(z.string())
+    .describe('3–8 short lowercase concept tags (subject areas, places, crafts, eras, moods, e.g. "maritime history", "west africa", "slow craft"). Reuse tags from the given vocabulary when they fit.'),
 });
 const Tags = z.object({ tags: z.array(Tag) });
 
 const TAG_SYSTEM = `You label YouTube videos from their metadata so a recommendation app can learn what kinds of videos a person enjoys.
 For each video give: subject; format (documentary = produced long-form film/report; lecture = talk or class; explainer = presenter explains a concept; process = watching something being made, repaired or done, little talking; performance = music, dance, comedy, sport; interview = conversation or podcast; travel = places and journeys; essay = opinionated video essay; tutorial = teaches a skill step by step; commentary = news, reactions, opinions on current things; compilation = lists, top-10s, clips; vlog = personal day-in-the-life; other); pace; depth; and whether it looks like clickbait.
-Judge from title, channel, length and description. Label every video exactly once, using its index.`;
+Judge from title, channel, length and description. Label every video exactly once, using its index.
+Concepts are how the app relates videos to each other and to the viewer's taste, so make them meaningful and reusable: prefer an existing tag from the vocabulary over a near-synonym, mix broad tags ("history") with specific ones ("age of sail"), and include place/culture tags when relevant.`;
 
 const TAG_BATCH = 40;
 
 /** Describe videos in parallel batches. Returns facets by video id; missing entries just stay unlabelled. */
-export async function describeVideos(auth: ClaudeAuth, videos: Candidate[]): Promise<Record<string, Facets>> {
+export async function describeVideos(auth: ClaudeAuth, videos: Candidate[], vocabulary: string[] = []): Promise<Record<string, Facets>> {
   const out: Record<string, Facets> = {};
   const batches: Candidate[][] = [];
   for (let i = 0; i < videos.length; i += TAG_BATCH) batches.push(videos.slice(i, i + TAG_BATCH));
@@ -257,11 +268,24 @@ export async function describeVideos(auth: ClaudeAuth, videos: Candidate[]): Pro
           ...FALLBACK,
           output_config: { effort: 'low', format: betaZodOutputFormat(Tags) },
           system: TAG_SYSTEM,
-          messages: [{ role: 'user', content: `Label these ${batch.length} videos:\n${list}` }],
+          messages: [
+            {
+              role: 'user',
+              content: `${vocabulary.length ? `Concept vocabulary in use (reuse when it fits): ${vocabulary.join(', ')}\n\n` : ''}Label these ${batch.length} videos:\n${list}`,
+            },
+          ],
         });
         for (const t of res.parsed_output?.tags ?? []) {
           const v = batch[t.i];
-          if (v) out[v.id] = { subject: t.subject, format: t.format, pace: t.pace, depth: t.depth, clickbait: t.clickbait };
+          if (v)
+            out[v.id] = {
+              subject: t.subject,
+              format: t.format,
+              pace: t.pace,
+              depth: t.depth,
+              clickbait: t.clickbait,
+              concepts: [...new Set(t.concepts.map((c) => c.trim().toLowerCase()).filter(Boolean))].slice(0, 8),
+            };
         }
       } catch (e) {
         console.warn('Describing a batch failed', e);
@@ -333,6 +357,9 @@ const Ask = z.object({
   reply: z.string().describe('1–2 short, warm sentences to the viewer saying what you are doing. No questions back.'),
   new_set: z.boolean().describe('Build a fresh set of videos now.'),
   focus: z.string().describe('What the new set should centre on (e.g. "music: live sessions and world music"). Empty if none.'),
+  focus_concepts: z
+    .array(z.string())
+    .describe('For a focus: 3–10 lowercase concept tags a matching video would carry (e.g. "live music", "afrobeat", "jazz"), so the app can pick from videos it already has. Empty if no focus.'),
   add_rows: z.array(z.object({ title: z.string().describe('Short row title, 2–5 words.'), brief: z.string().describe('What belongs in the row, one sentence.') })),
   remove_rows: z.array(z.string()).describe('Titles of existing custom rows to remove.'),
   add_interests: z.array(z.string()).describe('Long-term interests to remember, short topic names.'),
@@ -422,4 +449,28 @@ Write for a non-technical owner. Menu paths should match Android TV's English se
   });
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude couldn’t produce a diagnosis this time.');
   return res.parsed_output;
+}
+
+// ---------------------------------------------------------------- Ask suggestions
+
+const Suggestions = z.object({
+  suggestions: z
+    .array(z.object({ label: z.string().describe('2–6 words, inviting, specific.'), kind: z.enum(['more', 'new', 'mood']) }))
+    .describe('10 suggestions: about 4 "more" (deeper into known interests), 4 "new" (adjacent or fresh directions), 2 "mood" (a feeling or format, e.g. "something calm and slow").'),
+});
+export type Suggestion = z.infer<typeof Suggestions>['suggestions'][number];
+
+/** Short things the viewer might want to ask for, based on their taste. No YouTube calls. */
+export async function suggestAsks(auth: ClaudeAuth, input: PlannerInput): Promise<Suggestion[]> {
+  const res = await client(auth).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 4000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(Suggestions) },
+    system:
+      'You suggest things a viewer could ask their YouTube app for right now, as tappable chips. Base them on what you know about their taste, but keep them varied: some deeper into what they love, some genuinely new directions, and a couple of moods. Be specific and enticing ("Edo-period carpentry", "Live sessions from Lagos"), not generic ("Music", "Science").',
+    messages: [{ role: 'user', content: describeViewer(input) }],
+  });
+  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('No suggestions');
+  return res.parsed_output.suggestions.slice(0, 12);
 }

@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DailyFeed } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
-import { ask, getTold, mergeTold } from '../lib/wander.ts';
+import { ask, getSuggestions, getTold, mergeTold } from '../lib/wander.ts';
+import type { Suggestion } from '../lib/claude.ts';
 import { listen } from '../lib/voice.ts';
 import { linkedTv, sendToTv } from '../lib/link.ts';
 import { toast } from '../lib/toast.ts';
 import { focusFirst } from '../lib/spatialNav.ts';
 import { useTv } from './App.tsx';
 
-const SUGGESTIONS = [
+const STARTERS = [
   'I’m in the mood for music today',
   'Something light and funny',
   'Give me a fresh set',
@@ -37,6 +38,11 @@ export function AskSheet({
   const [changes, setChanges] = useState<string[]>([]);
   const [error, setError] = useState('');
   const started = useRef(false);
+  // Claude's suggestions from your taste (refreshed about daily); a few fixed ones until they arrive.
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  useEffect(() => {
+    getSuggestions(keys).then(setSuggestions).catch(() => undefined);
+  }, [keys]);
   const open = useRef(true);
   const tvLink = !tv ? linkedTv() : null;
   const [target, setTarget] = useState<'here' | 'tv'>(tvLink ? 'tv' : 'here');
@@ -158,13 +164,21 @@ export function AskSheet({
         </div>
 
         {!heard && (
-          <div className="chip-row wrap">
-            {SUGGESTIONS.map((s) => (
-              <button key={s} className="chip" disabled={busy} onClick={() => submit(s)}>
-                {s}
-              </button>
-            ))}
-          </div>
+          <>
+            {suggestions.length > 0 && <p className="muted small suggest-title">Picked for you by Claude:</p>}
+            <div className="chip-row wrap">
+              {(suggestions.length ? suggestions.map((s) => s.label) : STARTERS).map((s, i) => (
+                <button
+                  key={s}
+                  className={`chip${suggestions[i]?.kind === 'new' ? ' chip-new' : suggestions[i]?.kind === 'mood' ? ' chip-mood' : ''}`}
+                  disabled={busy}
+                  onClick={() => submit(s)}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </>
         )}
 
         {heard && <p className="heard">“{heard}”</p>}

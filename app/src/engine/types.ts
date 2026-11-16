@@ -31,6 +31,8 @@ export interface Facets {
   pace: 'calm' | 'moderate' | 'energetic';
   depth: 'light' | 'medium' | 'deep';
   clickbait: boolean;
+  /** 3–8 short concept tags from Claude ("maritime history", "slow craft", "west africa"). */
+  concepts?: string[];
 }
 
 /** A video plus where it came from, so we can learn from what happens to it. */

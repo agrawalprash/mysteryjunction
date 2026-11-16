@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import { claudeAuth, loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
 import { diagSnapshot, sayDiag, startDiag, stopDiag } from '../lib/diagStore.ts';
 import { startLinkServer, type LinkMessage } from '../lib/link.ts';
-import { ask, getTold, mergeTold, newSet, search, setsLeftToday, todaysFeed } from '../lib/wander.ts';
+import { ask, getTold, mergeTold, newSet, onResume, search, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
 import { controlPlayer, nowPlaying } from '../lib/nowPlaying.ts';
 import { checkForUpdate, installUpdate } from '../lib/updater.ts';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
@@ -65,6 +65,19 @@ export function App() {
     return () => {
       off();
       clearTimeout(timer);
+    };
+  }, []);
+
+  // Keep the video pool topped up in the background while the app is open.
+  useEffect(() => {
+    if (keys?.youtube) startBackground(keys);
+  }, [keys]);
+  useEffect(() => {
+    const h = CapApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) onResume();
+    });
+    return () => {
+      h.then((x) => x.remove());
     };
   }, []);
 

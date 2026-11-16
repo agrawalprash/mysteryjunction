@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ApiKeys } from '../lib/keys.ts';
-import { forget, getState, maybeRefreshTaste, resetLearning, setCost, setsLeftToday } from '../lib/wander.ts';
+import { forget, getState, maybeRefreshTaste, poolStatus, resetLearning, setCost } from '../lib/wander.ts';
 import { listen, onVoiceKey, voiceAvailable } from '../lib/voice.ts';
 import { UpdateBanner } from './UpdateBanner.tsx';
 import { DiagnosePanel } from './DiagnosePanel.tsx';
@@ -115,6 +115,7 @@ export function Settings({
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [, force] = useState(0);
   const tv = useTv();
+  const pool = poolStatus();
   const [prefs, setPrefs] = useState(getSettings());
   const [tasteBusy, setTasteBusy] = useState(false);
   const [tasteError, setTasteError] = useState('');
@@ -280,11 +281,14 @@ export function Settings({
           YouTube quota used: {quotaUsed().toLocaleString('en-US')} / {DAILY_QUOTA.toLocaleString('en-US')}
         </p>
         <p className="muted small">
-          A set costs about {setCost().toLocaleString('en-US')} units lately, so about {setsLeftToday()} more today. Repeat searches and channel lookups
-          are cached, so they’re free for a few days.
+          Video pool: {pool.total.toLocaleString('en-US')} of {pool.size.toLocaleString('en-US')} ({pool.freshMain} not shown yet,{' '}
+          {pool.described} described by Claude). New sets come from the pool instantly and cost no quota. It tops itself up in the background
+          {pool.lastRefill ? `; last top-up ${Math.round((Date.now() - pool.lastRefill) / 60000)} min ago` : ''}
+          {pool.refilling ? ' (topping up now)' : ''}.
         </p>
         <p className="muted small">
-          Videos watched so far: {st.history.length}. Claude: {keys.anthropic ? 'on' : 'off (no key)'}. Next set {st.prepared ? 'is ready' : 'not prepared yet'}.
+          A top-up costs about {setCost().toLocaleString('en-US')} units lately. Repeat searches and channel lookups are cached for days. Videos
+          watched so far: {st.history.length}. Claude: {keys.anthropic ? 'on' : 'off (no key)'}.
         </p>
       </section>
 

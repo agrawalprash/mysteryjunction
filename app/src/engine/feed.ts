@@ -1,6 +1,7 @@
 // Turns a pool of candidate videos into today's finite, varied home feed.
 
 import type { Candidate, CustomRow, DailyFeed, FeedRow, Video, WatchRecord } from './types.ts';
+import { conceptAffinity, conceptsOf, features, predict, sampleRate, type Weights } from './learn.ts';
 import {
   coreInterests,
   facetBoost,
@@ -48,6 +49,10 @@ export interface FeedContext {
   history: WatchRecord[];
   /** Learned format/pace/depth leanings (empty if Claude hasn't described any videos yet). */
   facetProfile?: Profile;
+  /** Taste over Claude's concept tags. */
+  conceptProfile?: Profile;
+  /** The on-device ranking model's weights. */
+  weights?: Weights;
   rng?: () => number;
 }
 
@@ -130,6 +135,13 @@ export function makeScorer(ctx: FeedContext) {
     if (misses.has(key)) s *= 0.6;
     // Learned format/pace/depth leanings, and a penalty for clickbait.
     s *= facetBoost(ctx.facetProfile ?? {}, c.facets, ctx.now);
+    // How well the video's concepts match your taste, through the learned ranking model.
+    const affinity = ctx.conceptProfile ? conceptAffinity(ctx.conceptProfile, conceptsOf(c), ctx.now) : 0;
+    if (ctx.weights) s *= 0.5 + predict(ctx.weights, features(c, affinity, ctx.now));
+    else s *= 1 + Math.max(-0.5, Math.min(1.5, affinity)) * 0.3;
+    // Exploring: for topics one step away or further, bet on uncertain ones in proportion
+    // to how well they might land (Thompson sampling on how often the topic was finished).
+    if (t && (c.tier === 'adjacent' || c.tier === 'wildcard')) s *= 0.6 + 0.8 * sampleRate(t.watches, t.exposures, rng);
     // A little randomness so two equally good videos don't always tie the same way.
     s *= 0.8 + rng() * 0.4;
     return s;

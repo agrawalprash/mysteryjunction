@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Candidate } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
-import { search } from '../lib/wander.ts';
+import { search, searchPool } from '../lib/wander.ts';
 import { listen } from '../lib/voice.ts';
 import { linkedTv, sendToTv } from '../lib/link.ts';
 import { VideoCard } from './VideoCard.tsx';
@@ -40,6 +40,7 @@ export function Search({
   const [target, setTarget] = useState<'here' | 'tv'>(tvLink && initialTarget === 'tv' ? 'tv' : 'here');
   const [q, setQ] = useState(initialQuery ?? lastQuery);
   const [results, setResults] = useState<Candidate[]>(initialQuery ? [] : lastResults);
+  const [poolHits, setPoolHits] = useState<Candidate[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -58,6 +59,8 @@ export function Search({
         setStatus(`📺 Showing ${r.count ?? 'the'} results for “${text}” on the TV.`);
         return;
       }
+      // Instantly: what's already in your pool; then YouTube's own results.
+      setPoolHits(searchPool(text));
       const r = await search(text, keys);
       lastQuery = text;
       lastResults = r;
@@ -142,6 +145,17 @@ export function Search({
         <div className="error-box">
           <p>{error}</p>
         </div>
+      )}
+      {poolHits.length > 0 && target === 'here' && (
+        <>
+          <h3 className="list-title">Already in your pool</h3>
+          <div className="list">
+            {poolHits.map((v) => (
+              <VideoCard key={`p-${v.id}`} video={v} onOpen={open} variant="list" />
+            ))}
+          </div>
+          {results.length > 0 && <h3 className="list-title">From YouTube</h3>}
+        </>
       )}
       <div className="list">
         {results.map((v) => (
