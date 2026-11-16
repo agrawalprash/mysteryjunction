@@ -71,7 +71,8 @@ interface State {
   /** Explore's map: places opened, videos watched from each place, and fetched videos per place. */
   mapVisits: Record<string, { path: string[]; at: number }>;
   mapWatch: Record<string, number>;
-  mapVideos: Record<string, { at: number; ids: string[] }>;
+  /** Each place's own YouTube search results, kept for a week (newest places last). */
+  mapVideos: Record<string, { at: number; videos?: Candidate[]; ids?: string[] }>;
 }
 
 function fresh(): State {
@@ -1015,29 +1016,60 @@ export function placesVisitedIn(path: string[]): number {
   return Object.keys(state.mapVisits).filter((k) => k.startsWith(id + ' › ')).length;
 }
 
-/** Videos for a place: from the pool first; fetched (one search) only when the pool has too few. */
-export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m: string) => void = () => undefined): Promise<Candidate[]> {
-  const c = ctx();
-  const id = pathId(place.path);
-  const text = `${place.name} ${place.desc}`;
-  const fromPool = matchPool(state.pool, c, text, place.concepts, 12).filter((v) => v.tier !== 'shorts');
-  const byId = new Map(state.pool.map((v) => [v.id, v]));
-  const cached = (state.mapVideos[id]?.ids ?? []).map((x) => byId.get(x)).filter((v): v is Candidate => !!v && eligible(v, c));
-  const have = [...new Map([...cached, ...fromPool].map((v) => [v.id, v])).values()];
-  const fresh = state.mapVideos[id] && Date.now() - state.mapVideos[id].at < 7 * DAY;
-  if (have.length >= 6 || fresh || quotaUsed() + 101 > AUTO_BUDGET) return have.slice(0, 12);
+export interface PlaceVideos {
+  videos: Candidate[];
+  /** Set when these came from the pool instead of a fresh search (e.g. the daily limit is used up). */
+  note?: string;
+}
 
-  onProgress('Finding videos for this place…');
+const PLACE_CACHE = 7 * DAY;
+const PLACES_KEPT = 40;
+
+/** A place's videos: one YouTube search for that place (kept for a week), filtered and ordered for this profile. */
+export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m: string) => void = () => undefined): Promise<PlaceVideos> {
+  const id = pathId(place.path);
+  const show = (list: Candidate[]) => {
+    const c = ctx();
+    const score = makeScorer({ ...c, rng: () => 0.5 });
+    // Keep YouTube's relevance order mostly, nudged by quality and this profile's leanings.
+    return list
+      .filter((v) => eligible(v, c))
+      .map((v, i) => ({ v, s: score(v) / (1 + i * 0.08) }))
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 18)
+      .map((x) => x.v);
+  };
+  const cached = state.mapVideos[id];
+  if (cached?.videos && Date.now() - cached.at < PLACE_CACHE) return { videos: show(cached.videos) };
+
+  if (quotaUsed() + 101 > AUTO_BUDGET) {
+    const fromPool = matchPool(state.pool, ctx(), `${place.name} ${place.desc}`, place.concepts, 18).filter((v) => v.tier !== 'shorts');
+    return { videos: fromPool, note: 'YouTube’s daily limit is used up, so these are from videos you already have. Fresh ones tomorrow.' };
+  }
+
+  onProgress('Searching YouTube for this place…');
   const now = Date.now();
   const gen = generation;
-  const ids = await searchIds(place.query, keys.youtube, { maxResults: 25, language: getSettings().language, duration: 'medium' });
-  const videos = await videoDetails(ids, keys.youtube);
-  const found: Candidate[] = videos.map((v) => ({ ...v, topic: place.name, tier: 'search' as const, because: `On the map: ${place.path.join(' › ')}`, query: place.query, fetchedAt: now }));
-  await describe(found, claudeAuth(keys), () => undefined);
-  if (gen !== generation) return have;
+  const ids = await searchIds(place.query, keys.youtube, { maxResults: 30, language: getSettings().language });
+  const details = await videoDetails(ids, keys.youtube);
+  const found: Candidate[] = details.map((v) => ({
+    ...v,
+    topic: place.name,
+    tier: 'search' as const,
+    because: `On the map: ${place.path.join(' › ')}`,
+    query: place.query,
+    fetchedAt: now,
+  }));
+  // Claude describes them (and checks them for kid profiles) before they're shown.
+  await describe(found, claudeAuth(keys), () => undefined, found.length);
+  if (gen !== generation) return { videos: [] };
   mergePool(found);
-  state.mapVideos[id] = { at: now, ids: found.map((v) => v.id) };
+  // Kept without descriptions, to stay small.
+  state.mapVideos[id] = { at: now, videos: found.map((v) => ({ ...v, description: undefined })) };
+  const keys_ = Object.keys(state.mapVideos);
+  if (keys_.length > PLACES_KEPT) {
+    for (const k of keys_.sort((a, b) => state.mapVideos[a].at - state.mapVideos[b].at).slice(0, keys_.length - PLACES_KEPT)) delete state.mapVideos[k];
+  }
   persist();
-  const shown = found.filter((v) => eligible(v, ctx()));
-  return [...new Map([...have, ...shown].map((v) => [v.id, v])).values()].slice(0, 12);
+  return { videos: show(found) };
 }

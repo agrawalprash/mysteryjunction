@@ -273,12 +273,15 @@ export function MapPage({
           .catch((e) => setLevelError(e instanceof Error ? e.message : String(e)));
     }
     placeVideos(keys, place, setVideoNote)
-      .then(setVideos)
+      .then((r) => {
+        setVideos(r.videos);
+        setVideoNote(r.note ?? '');
+      })
       .catch((e) => {
         setVideos([]);
         setVideoNote(e instanceof Error ? e.message : String(e));
       })
-      .finally(() => setVideoNote((n) => (n.startsWith('Finding') ? '' : n)));
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -330,6 +333,7 @@ export function MapPage({
             </div>
           )}
           {videos?.length === 0 && <p className="muted small">{videoNote || 'Nothing here yet. Try a place inside, or ask.'}</p>}
+          {!!videos?.length && videoNote && <p className="muted small">{videoNote}</p>}
           {!!videos?.length && (
             <div className="watch-grid">
               {videos.map((v) => (
