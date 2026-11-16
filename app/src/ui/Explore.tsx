@@ -1,7 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { Candidate } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
-import { exploreAsk, exploreWorlds, getSuggestions, worldShelves, type ExploreResult, type WorldTile } from '../lib/wander.ts';
+import {
+  exploreAsk,
+  getSuggestions,
+  noteOpenedFrom,
+  placeMark,
+  placesVisitedIn,
+  placeVideos,
+  recentPlaces,
+  visitPlace,
+  type ExploreResult,
+  type PlaceMark,
+} from '../lib/wander.ts';
+import { claudeAuth } from '../lib/keys.ts';
+import { AREAS, findPlace, levelOf, pathId, savedLevel, type MapLevel, type MapPlace } from '../lib/map.ts';
 import type { Suggestion } from '../lib/claude.ts';
 import { listen } from '../lib/voice.ts';
 import { VideoCard } from './VideoCard.tsx';
@@ -47,8 +60,6 @@ export async function runExplore(run: (onProgress: (m: string) => void) => Promi
   }
 }
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
 function Row({ title, subtitle, items, open }: { title: string; subtitle?: string; items: Candidate[]; open: (v: Candidate) => void }) {
   if (!items.length) return null;
   return (
@@ -81,18 +92,87 @@ function Topbar({ title, subtitle, onBack }: { title: string; subtitle?: string;
   );
 }
 
-function Tiles({ tiles, edge, onPick }: { tiles: WorldTile[]; edge?: boolean; onPick: (w: WorldTile) => void }) {
+// ---------------------------------------------------------------- the Ask bar (on every Explore page)
+
+function AskBar({
+  keys,
+  openResults,
+  browsing,
+  suggestions = [],
+}: {
+  keys: ApiKeys;
+  openResults: () => void;
+  /** The place on the map this page shows, so "more like this" means here. */
+  browsing?: string[];
+  suggestions?: Suggestion[];
+}) {
+  const tv = useTv();
+  const [text, setText] = useState('');
+  const [voiceError, setVoiceError] = useState('');
+  const view = useAskView();
+  const here = browsing?.[browsing.length - 1];
+
+  const submit = (said: string) => {
+    const t = said.trim();
+    if (!t || view.kind === 'busy') return;
+    setText('');
+    openResults();
+    void runExplore((p) => exploreAsk(keys, t, p, browsing), t).catch(() => undefined);
+  };
+  const speak = async () => {
+    setVoiceError('');
+    try {
+      const said = await listen(here ? `Ask about ${here}` : 'Ask for anything');
+      if (said) submit(said);
+    } catch (e) {
+      setVoiceError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
-    <div className="world-strip">
-      {tiles.map((w) => (
-        <button key={w.concept} className={`world-tile${edge ? ' world-edge' : ''}`} onClick={() => onPick(w)}>
-          <span className="world-thumb">{w.thumb && <img src={w.thumb} alt="" loading="lazy" />}</span>
-          <span className="world-name">{cap(w.concept)}</span>
-          <span className="world-sub">{edge && w.via ? `next to ${w.via}` : `${w.count} videos`}</span>
+    <section className="explore-ask">
+      <div className="ask-row">
+        {!tv && (
+          <button className="btn mic-btn" aria-label="Ask by voice" onClick={speak}>
+            🎤
+          </button>
+        )}
+        <form
+          className="ask-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit(text);
+          }}
+        >
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={here ? `Ask about ${here}, or anything else…` : 'Ask for anything: a topic, a mood, a change…'}
+            enterKeyHint="send"
+          />
+        </form>
+      </div>
+      {voiceError && <p className="small error-text">{voiceError}</p>}
+      {suggestions.length > 0 && (
+        <div className="chip-row wrap">
+          {suggestions.slice(0, 6).map((s) => (
+            <button key={s.label} className={`chip${s.kind === 'new' ? ' chip-new' : s.kind === 'mood' ? ' chip-mood' : ''}`} onClick={() => submit(s.label)}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {view.kind !== 'idle' && !browsing && (
+        <button className="btn btn-ghost last-ask" onClick={openResults}>
+          {view.kind === 'busy' ? `Working on “${view.text}”…` : `Last ask: “${view.result.text}”`} →
         </button>
-      ))}
-    </div>
+      )}
+    </section>
   );
+}
+
+function Mark({ mark }: { mark: PlaceMark }) {
+  return <span className={`place-mark mark-${mark}`} aria-label={mark === 'love' ? 'You love it' : mark === 'watched' ? 'Watched here' : 'Not been yet'} />;
 }
 
 // ---------------------------------------------------------------- the hub
@@ -100,137 +180,207 @@ function Tiles({ tiles, edge, onPick }: { tiles: WorldTile[]; edge?: boolean; on
 export function ExploreHub({
   keys,
   onBack,
-  openWorld,
+  openPlace,
   openResults,
 }: {
   keys: ApiKeys;
   onBack: () => void;
-  openWorld: (concept: string, via?: string) => void;
+  openPlace: (path: string[]) => void;
   openResults: () => void;
 }) {
   const tv = useTv();
-  const [text, setText] = useState('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [voiceError, setVoiceError] = useState('');
-  const worlds = exploreWorlds();
-  const view = useAskView();
-
   useEffect(() => {
     if (keys.anthropic) getSuggestions(keys).then(setSuggestions).catch(() => undefined);
   }, [keys]);
+  const recent = recentPlaces(4);
 
-  const submit = (said: string) => {
-    const t = said.trim();
-    if (!t || view.kind === 'busy') return;
-    setText('');
-    openResults();
-    void runExplore((p) => exploreAsk(keys, t, p), t).catch(() => undefined);
-  };
-
-  const speak = async () => {
-    setVoiceError('');
-    try {
-      const said = await listen('Ask for anything');
-      if (said) submit(said);
-    } catch (e) {
-      setVoiceError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const liked = worlds.yours.some((w) => w.affinity > 0);
   return (
     <div className="screen explore">
       <Topbar title="Explore" onBack={onBack} />
+      <AskBar keys={keys} openResults={openResults} suggestions={suggestions} />
+      {tv && <p className="muted small explore-hint">Or hold the touchpad on your phone remote and say it.</p>}
 
-      <section className="explore-ask">
-        <div className="ask-row">
-          {!tv && (
-            <button className="btn mic-btn" aria-label="Ask by voice" onClick={speak}>
-              🎤
-            </button>
-          )}
-          <form
-            className="ask-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              submit(text);
-            }}
-          >
-            <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask for anything: a topic, a mood, a change…" enterKeyHint="send" />
-          </form>
-        </div>
-        {tv && <p className="muted small">Or hold the touchpad on your phone remote and say it.</p>}
-        {voiceError && <p className="small error-text">{voiceError}</p>}
-        {suggestions.length > 0 && (
-          <div className="chip-row wrap">
-            {suggestions.slice(0, 6).map((s) => (
-              <button key={s.label} className={`chip${s.kind === 'new' ? ' chip-new' : s.kind === 'mood' ? ' chip-mood' : ''}`} onClick={() => submit(s.label)}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {view.kind !== 'idle' && (
-          <button className="btn btn-ghost last-ask" onClick={openResults}>
-            {view.kind === 'busy' ? `Working on “${view.text}”…` : `Last ask: “${view.result.text}”`} →
-          </button>
-        )}
-      </section>
-
-      <section className="explore-worlds">
-        <h2>{liked ? 'Your worlds' : 'Worlds to start with'}</h2>
-        {worlds.yours.length === 0 ? (
-          <p className="muted small">Worlds appear as Claude describes the videos waiting for you. Give it a minute.</p>
-        ) : (
-          <Tiles tiles={worlds.yours} onPick={(w) => openWorld(w.concept)} />
-        )}
-        {worlds.edges.length > 0 && (
-          <>
-            <h2>Just past the edge</h2>
-            <p className="muted small">Places you haven’t been yet that keep turning up next to yours.</p>
-            <Tiles tiles={worlds.edges} edge onPick={(w) => openWorld(w.concept, w.via)} />
-          </>
-        )}
-      </section>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- one world
-
-export function WorldPage({
-  concept,
-  via,
-  onBack,
-  open,
-  openWorld,
-}: {
-  concept: string;
-  via?: string;
-  onBack: () => void;
-  open: (v: Candidate) => void;
-  openWorld: (concept: string) => void;
-}) {
-  const w = worldShelves(concept);
-  return (
-    <div className="screen explore world-page">
-      <Topbar title={cap(concept)} subtitle={via ? `Next to ${via} · ${w.count} videos` : `${w.count} videos waiting`} onBack={onBack} />
-      {w.count === 0 && <p className="muted planner-note">Nothing left here right now. More arrive as Wander tops up.</p>}
-      <Row title="Best here" items={w.best} open={open} />
-      <Row title="Short ones" items={w.short} open={open} />
-      <Row title="Go deeper" items={w.deeper} open={open} />
-      {w.nearby.length > 0 && (
-        <section className="explore-worlds">
-          <h2>Worlds nearby</h2>
-          <div className="chip-row wrap">
-            {w.nearby.map((c) => (
-              <button key={c} className="chip chip-world" onClick={() => openWorld(c)}>
-                {cap(c)} →
+      {recent.length > 0 && (
+        <section className="explore-section">
+          <h2>Pick up where you were</h2>
+          <div className="recent-grid">
+            {recent.map((p) => (
+              <button key={pathId(p)} className="recent-tile" onClick={() => openPlace(p)}>
+                <span className="recent-path">{p.slice(0, -1).join(' › ')}</span>
+                <span className="recent-name">{p[p.length - 1]}</span>
               </button>
             ))}
           </div>
         </section>
       )}
+
+      <section className="explore-section">
+        <h2>The map</h2>
+        <div className="area-grid">
+          {AREAS.map((a) => {
+            const n = placesVisitedIn(a.path);
+            const mark = placeMark(a.path);
+            return (
+              <button key={a.name} className="area-tile" onClick={() => openPlace(a.path)}>
+                <span className="area-name">{a.name}</span>
+                <span className={`area-sub${n || mark !== 'none' ? ' area-sub-on' : ''}`}>
+                  {mark === 'love' ? '★ ' : ''}
+                  {n ? `${n} visited` : mark !== 'none' ? 'Watched here' : 'Not yet'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- one place on the map
+
+export function MapPage({
+  keys,
+  path,
+  onBack,
+  goTo,
+  open,
+  openResults,
+}: {
+  keys: ApiKeys;
+  path: string[];
+  onBack: () => void;
+  /** Jump to another place (a breadcrumb, a place inside, next door); [] is the hub. */
+  goTo: (path: string[]) => void;
+  open: (v: Candidate) => void;
+  openResults: () => void;
+}) {
+  const tv = useTv();
+  const place: MapPlace = findPlace(path);
+  const [level, setLevel] = useState<MapLevel | null>(savedLevel(path));
+  const [levelError, setLevelError] = useState('');
+  const [videos, setVideos] = useState<Candidate[] | null>(null);
+  const [videoNote, setVideoNote] = useState('');
+
+  useEffect(() => {
+    visitPlace(path);
+    const auth = claudeAuth(keys);
+    if (!level) {
+      if (!auth) setLevelError('Drawing the map needs an Anthropic key.');
+      else
+        levelOf(auth, path)
+          .then(setLevel)
+          .catch((e) => setLevelError(e instanceof Error ? e.message : String(e)));
+    }
+    placeVideos(keys, place, setVideoNote)
+      .then(setVideos)
+      .catch((e) => {
+        setVideos([]);
+        setVideoNote(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => setVideoNote((n) => (n.startsWith('Finding') ? '' : n)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // On the TV, start on the first place to go deeper (or the first video at the end of the map).
+  useEffect(() => {
+    if (!tv) return;
+    const t = window.setTimeout(() => {
+      // Don't pull focus away once the viewer has moved somewhere on this page.
+      if (document.activeElement?.closest('.map-page .place-tile, .map-page .card, .map-page .chip, .map-page input')) return;
+      focusFirst(document.querySelector('.map-page .place-tile') ? '.map-page .place-tile' : '.map-page .card');
+    }, 120);
+    return () => clearTimeout(t);
+  }, [tv, level, videos]);
+
+  const parent = path.length > 1 ? savedLevel(path.slice(0, -1)) : null;
+  const siblings = (parent?.children ?? []).filter((c) => pathId(c.path) !== pathId(path)).slice(0, 4);
+  const elsewhere = level?.elsewhere ?? [];
+  const deep = !!level && level.children.length <= 4;
+  const watch = (v: Candidate) => {
+    noteOpenedFrom(v.id, path);
+    open(v);
+  };
+
+  return (
+    <div className="screen explore map-page">
+      <Topbar title={place.name} onBack={onBack} />
+      <nav className="crumbs" aria-label="Where you are">
+        <button className="crumb" onClick={() => goTo([])}>
+          Map
+        </button>
+        {path.slice(0, -1).map((p, i) => (
+          <span key={p} className="crumb-wrap">
+            <span aria-hidden="true">›</span>
+            <button className="crumb" onClick={() => goTo(path.slice(0, i + 1))}>
+              {p}
+            </button>
+          </span>
+        ))}
+      </nav>
+      <AskBar keys={keys} openResults={openResults} browsing={path} />
+      {place.desc && <p className="map-desc">{place.desc}</p>}
+
+      <div className={`map-body${deep ? ' map-deep' : ''}`}>
+        <section className="map-watch">
+          <h2>Watch from here</h2>
+          {videos === null && (
+            <div className="ask-progress">
+              <div className="spinner small-spinner" /> {videoNote || 'Looking for videos…'}
+            </div>
+          )}
+          {videos?.length === 0 && <p className="muted small">{videoNote || 'Nothing here yet. Try a place inside, or ask.'}</p>}
+          {!!videos?.length && (
+            <div className="watch-grid">
+              {videos.map((v) => (
+                <VideoCard key={v.id} video={v} onOpen={watch} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="map-deeper">
+          <h2>
+            Go deeper{level ? <span className="muted"> · {level.children.length} places</span> : null}
+          </h2>
+          {!level && !levelError && (
+            <div className="ask-progress">
+              <div className="spinner small-spinner" /> Claude is drawing this part of the map…
+            </div>
+          )}
+          {levelError && <p className="small error-text">{levelError}</p>}
+          {level && (
+            <div className="place-grid">
+              {level.children.map((c) => (
+                <button key={c.name} className="place-tile" onClick={() => goTo(c.path)}>
+                  <Mark mark={placeMark(c.path)} />
+                  <span className="place-text">
+                    <span className="place-name">{c.name}</span>
+                    <span className="place-desc">{c.desc}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {siblings.length + elsewhere.length > 0 && (
+            <>
+              <h2>Next door</h2>
+              <div className="chip-row wrap">
+                {siblings.map((c) => (
+                  <button key={c.name} className="chip" onClick={() => goTo(c.path)}>
+                    {c.name}
+                  </button>
+                ))}
+                {elsewhere.map((c) => (
+                  <button key={pathId(c.path)} className="chip chip-world" title={c.path.join(' › ')} onClick={() => goTo(c.path)}>
+                    {c.name} ↗
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

@@ -24,7 +24,7 @@ import { closeOverlay } from '../lib/overlay.ts';
 import { Setup } from './Setup.tsx';
 import { Home } from './Home.tsx';
 import { Player } from './Player.tsx';
-import { ExploreHub, ResultsPage, runExplore, WorldPage } from './Explore.tsx';
+import { ExploreHub, MapPage, ResultsPage, runExplore } from './Explore.tsx';
 import { Settings } from './Settings.tsx';
 import { UpdatePopup } from './UpdatePopup.tsx';
 import { RemoteScreen } from './RemoteScreen.tsx';
@@ -39,7 +39,7 @@ export type Screen =
   | { kind: 'home' }
   | { kind: 'player'; video: Candidate }
   | { kind: 'explore' }
-  | { kind: 'world'; concept: string; via?: string }
+  | { kind: 'place'; path: string[] }
   | { kind: 'results' }
   | { kind: 'remote' }
   | { kind: 'profiles' }
@@ -226,6 +226,15 @@ export function App() {
     setStack((st) => [...st, s]);
   }, []);
   const back = useCallback(() => setStack((st) => (st.length > 1 ? st.slice(0, -1) : st)), []);
+  // Jump around the map: back up to a place already in the stack (a breadcrumb), or go to a new one.
+  const goToPlace = useCallback((path: string[]) => {
+    const id = path.join('›').toLowerCase();
+    setStack((st) => {
+      const i = st.findIndex((s) => (path.length === 0 ? s.kind === 'explore' : s.kind === 'place' && s.path.join('›').toLowerCase() === id));
+      if (i >= 0) return st.slice(0, i + 1);
+      return path.length === 0 ? [...st, { kind: 'explore' }] : [...st, { kind: 'place', path }];
+    });
+  }, []);
   const replace = useCallback((s: Screen) => setStack((st) => [...st.slice(0, -1), s]), []);
 
   // Android back button (and the remote's Back) walks back through screens, then leaves the app.
@@ -248,7 +257,6 @@ export function App() {
     const t = window.setTimeout(() => {
       const prev = homeFocus.current;
       if (current.kind === 'home' && prev?.isConnected) prev.focus({ preventScroll: true });
-      else if (current.kind === 'world') focusFirst('.world-page .row .card');
       else focusFirst();
     }, 60);
     return () => clearTimeout(t);
@@ -288,21 +296,17 @@ export function App() {
           <Player key={current.video.id} video={current.video} onBack={back} open={(v) => replace({ kind: 'player', video: v })} />
         )}
         {current.kind === 'explore' && (
-          <ExploreHub
-            keys={keys}
-            onBack={back}
-            openWorld={(concept, via) => push({ kind: 'world', concept, via })}
-            openResults={() => push({ kind: 'results' })}
-          />
+          <ExploreHub keys={keys} onBack={back} openPlace={(path) => push({ kind: 'place', path })} openResults={() => push({ kind: 'results' })} />
         )}
-        {current.kind === 'world' && (
-          <WorldPage
-            key={current.concept}
-            concept={current.concept}
-            via={current.via}
+        {current.kind === 'place' && (
+          <MapPage
+            key={current.path.join('›')}
+            keys={keys}
+            path={current.path}
             onBack={back}
+            goTo={goToPlace}
             open={(v) => push({ kind: 'player', video: v })}
-            openWorld={(concept) => push({ kind: 'world', concept })}
+            openResults={() => push({ kind: 'results' })}
           />
         )}
         {current.kind === 'results' && (
@@ -334,7 +338,7 @@ export function App() {
     <TvContext.Provider value={tv}>
       {content}
       {keys.youtube && <UpdatePopup tv={tv} />}
-      {!tv && keys.youtube && linkedTv() && ['home', 'explore', 'world', 'results', 'settings', 'report'].includes(current.kind) && (
+      {!tv && keys.youtube && linkedTv() && ['home', 'explore', 'place', 'results', 'settings', 'report'].includes(current.kind) && (
         <button className="remote-fab" onClick={() => push({ kind: 'remote' })}>
           📺 Remote
         </button>
