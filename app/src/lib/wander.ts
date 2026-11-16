@@ -6,7 +6,7 @@
 // Refills happen while the app is open: after you watch things, when you come back,
 // and every 20 minutes. Plus a weekly taste profile, and things you tell Wander.
 
-import type { Candidate, CustomRow, DailyFeed, Direction, ExitRecord, TasteProfile, WatchRecord } from '../engine/types.ts';
+import type { Candidate, CustomRow, DailyFeed, Direction, ExitRecord, TasteProfile, Video, WatchRecord } from '../engine/types.ts';
 import {
   addFacetSignal,
   addSignal,
@@ -24,10 +24,10 @@ import { addConceptSignal, conceptAffinity, conceptsOf, features, initialWeights
 import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } from '../engine/pool.ts';
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
-import { AUTO_BUDGET, channelUploads, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
-import { askWander, describeVideos, explainPicks, planDay, planSurprise, routeAsk, writeTasteProfile, type ClaudeAuth, type PlannerInput } from './claude.ts';
+import { AUTO_BUDGET, channelUploads, fetchDirection, uploadsFromHandles, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
+import { askWander, describeVideos, explainPicks, placeChannels, planDay, planSurprise, routeAsk, writeTasteProfile, type ClaudeAuth, type PlannerInput } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
-import { addPlace, pathId, similarPlaces, topAreas, type MapPlace } from './map.ts';
+import { addPlace, pathId, setPlaceChannels, similarPlaces, topAreas, type MapPlace } from './map.ts';
 import { getSettings } from './settings.ts';
 import { timeStatus, type TimeStatus } from './screenTime.ts';
 import { activeProfile, deleteProfile, listProfiles, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
@@ -943,7 +943,7 @@ export async function exploreAsk(keys: ApiKeys, text: string, onProgress: (msg: 
   });
   if (route?.kind === 'place' && route.place.path.length) {
     const path = route.place.path.map((x) => x.trim()).filter(Boolean);
-    addPlace({ name: path[path.length - 1], desc: route.place.desc, query: route.place.query, concepts: route.place.concepts, path }, browsing);
+    addPlace({ name: path[path.length - 1], desc: route.place.desc, query: route.place.query, concepts: route.place.concepts, channels: route.place.channels, path }, browsing);
     return { text: t, reply: route.reply, poolHits: [], results: [], focus: [], place: path };
   }
   if (route?.kind === 'search' && route.search.trim()) {
@@ -1055,16 +1055,45 @@ export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m
   const cached = state.mapVideos[id];
   if (cached?.videos && Date.now() - cached.at < PLACE_CACHE) return { videos: show(cached.videos) };
 
-  if (quotaUsed() + 101 > AUTO_BUDGET - PLACE_RESERVE) {
+  const fromPoolOnly = (): PlaceVideos => {
+    const fromPool = matchPool(state.pool, ctx(), `${place.name} ${place.desc}`, place.concepts, 18).filter((v) => v.tier !== 'shorts');
+    return { videos: fromPool, note: `YouTube’s daily limit is used up, so these are from videos already here. Fresh ones after ${quotaResetTime()}.` };
+  };
+  // Channel reads cost a few units; searches 100 and stop well before the limit.
+  const canSearch = () => quotaUsed() + 101 <= AUTO_BUDGET - PLACE_RESERVE;
+  if (quotaUsed() + 15 > AUTO_BUDGET) {
     const fromPool = matchPool(state.pool, ctx(), `${place.name} ${place.desc}`, place.concepts, 18).filter((v) => v.tier !== 'shorts');
     return { videos: fromPool, note: 'YouTube’s daily limit is used up, so these are from videos you already have. Fresh ones tomorrow.' };
   }
 
-  onProgress('Searching YouTube for this place…');
   const now = Date.now();
   const gen = generation;
-  const ids = await searchIds(place.query, keys.youtube, { maxResults: 30, language: getSettings().language });
-  const details = await videoDetails(ids, keys.youtube);
+  const auth = claudeAuth(keys);
+
+  // Cheap first: recent uploads from channels that cover this place (a few units), kept if they match it.
+  let channels = place.channels;
+  if (!channels && auth) {
+    channels = await placeChannels(auth, place.path).catch(() => []);
+    setPlaceChannels(place.path, channels);
+  }
+  let details: Video[] = [];
+  if (channels?.length) {
+    onProgress('Looking through channels for this place…');
+    const words = [...new Set([place.name, ...place.concepts].flatMap((w) => w.toLowerCase().split(/[^\p{L}\p{N}]+/u)).filter((w) => w.length > 3))];
+    const uploads = await uploadsFromHandles(channels, keys.youtube).catch(() => [] as Video[]);
+    details = uploads.filter((v) => {
+      const hay = `${v.title} ${v.description ?? ''}`.toLowerCase();
+      return words.some((w) => hay.includes(w));
+    });
+  }
+  // Too few: one search (100 units), if there's room for it today.
+  if (details.length < 8 && !canSearch() && details.length === 0) return fromPoolOnly();
+  if (details.length < 8 && canSearch()) {
+    onProgress('Searching YouTube for this place…');
+    const ids = await searchIds(place.query, keys.youtube, { maxResults: 30, language: getSettings().language });
+    const have = new Set(details.map((v) => v.id));
+    details = [...details, ...(await videoDetails(ids.filter((x) => !have.has(x)), keys.youtube))];
+  }
   const found: Candidate[] = details.map((v) => ({
     ...v,
     topic: place.name,
@@ -1073,7 +1102,6 @@ export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m
     query: place.query,
     fetchedAt: now,
   }));
-  const auth = claudeAuth(keys);
   const keep = () => {
     mergePool(found);
     // Kept without descriptions, to stay small.

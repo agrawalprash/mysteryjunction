@@ -6,7 +6,9 @@ import { mapChildren, type ClaudeAuth, type MapPlaceInfo } from './claude.ts';
 import { activeProfile } from './profiles.ts';
 import { load, save } from './store.ts';
 
-export interface MapPlace extends MapPlaceInfo {
+export interface MapPlace extends Omit<MapPlaceInfo, 'channels'> {
+  /** Channels that cover this place (read cheaply before falling back to a search). */
+  channels?: string[];
   path: string[];
   /** Created from something the viewer asked for. */
   added?: boolean;
@@ -182,5 +184,14 @@ export function addPlace(place: MapPlace, from?: string[]) {
     if (!here.elsewhere.some((e) => pathId(e.path) === pathId(path))) here.elsewhere.unshift({ ...place, added: true });
     t[pathId(from)] = here;
   }
+  save(key, t);
+}
+
+/** Remember the channels found for a place (wherever it appears on the map). */
+export function setPlaceChannels(path: string[], channels: string[]) {
+  const key = treeKey();
+  const t = load<Record<string, MapLevel>>(key, {});
+  const id = pathId(path);
+  for (const level of Object.values(t)) for (const p of [...level.children, ...level.elsewhere]) if (pathId(p.path) === id) p.channels = channels;
   save(key, t);
 }
