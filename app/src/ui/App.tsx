@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import { claudeAuth, loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
 import { diagSnapshot, sayDiag, startDiag, stopDiag } from '../lib/diagStore.ts';
 import { linkedTv, startLinkServer, type LinkMessage } from '../lib/link.ts';
-import { ask, currentProfile, getTold, mergeTold, newSet, onResume, search, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
+import { ask, currentProfile, getTold, guideProfile, profileReport, mergeTold, newSet, onResume, search, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
 import { controlPlayer, nowPlaying } from '../lib/nowPlaying.ts';
 import { checkForUpdate, installUpdate } from '../lib/updater.ts';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
@@ -29,6 +29,7 @@ import { Settings } from './Settings.tsx';
 import { UpdatePopup } from './UpdatePopup.tsx';
 import { RemoteScreen } from './RemoteScreen.tsx';
 import { ProfilePicker } from './Profiles.tsx';
+import { Report } from './Report.tsx';
 import { listProfiles } from '../lib/profiles.ts';
 
 export type Screen =
@@ -37,6 +38,7 @@ export type Screen =
   | { kind: 'search'; target?: 'here' | 'tv'; voice?: boolean }
   | { kind: 'remote' }
   | { kind: 'profiles' }
+  | { kind: 'report' }
   | { kind: 'settings' }
   | { kind: 'setup' };
 
@@ -168,6 +170,11 @@ export function App() {
           const status = await installUpdate(info, () => undefined);
           return { status, version: info.name };
         }
+        case 'report':
+          return { profiles: listProfiles(), active: currentProfile().id, report: profileReport(msg.profileId ?? currentProfile().id) };
+        case 'guide':
+          guideProfile(msg.profileId, { addRule: msg.addRule, forget: msg.forget });
+          return { profiles: listProfiles(), active: currentProfile().id, report: profileReport(msg.profileId) };
         case 'search': {
           if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
           toast(`📱 Searching for “${msg.q}”…`);
@@ -281,12 +288,14 @@ export function App() {
             startWithVoice={current.voice}
           />
         )}
+        {current.kind === 'report' && <Report keys={keys} onBack={back} />}
         {current.kind === 'profiles' && <ProfilePicker onDone={back} onManage={() => replace({ kind: 'settings' })} />}
         {current.kind === 'remote' && (
           <RemoteScreen
             keys={keys}
             onBack={back}
             openDiagnose={() => push({ kind: 'settings' })}
+            openReport={() => push({ kind: 'report' })}
           />
         )}
         {current.kind === 'settings' && (
@@ -297,6 +306,7 @@ export function App() {
             onTvModeChange={setTvPref}
             deviceIsTv={deviceIsTv}
             onKeys={setKeys}
+            openReport={() => push({ kind: 'report' })}
           />
         )}
       </>

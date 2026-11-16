@@ -28,7 +28,7 @@ import { AUTO_BUDGET, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetai
 import { askWander, describeVideos, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
 import { getSettings } from './settings.ts';
-import { activeProfile, deleteProfile, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
+import { activeProfile, deleteProfile, listProfiles, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 export const SURPRISES_PER_DAY = 3;
@@ -821,4 +821,62 @@ export function switchProfile(id: string) {
 export function removeProfile(id: string, fallbackId: string) {
   if (id === activeProfile().id) switchProfile(fallbackId);
   deleteProfile(id);
+}
+
+// ---------------------------------------------------------------- profile reports
+
+export interface ProfileReport {
+  profile: WanderProfile;
+  /** What they're into right now, strongest first. */
+  into: string[];
+  /** Things that haven't landed lately. */
+  notLanding: string[];
+  taste: TasteProfile | null;
+  told: Told;
+  recent: { title: string; channel: string; at: number; fraction: number }[];
+  watchedTotal: number;
+  minutesThisWeek: number;
+  videosThisWeek: number;
+  pool: { total: number; fresh: number; described: number } | null;
+}
+
+/** A profile's saved data: the live state for the active profile, a read-only copy for others. */
+function stateFor(id: string): State {
+  if (id === activeProfile().id) return state;
+  return { ...fresh(), ...load<Partial<State>>(stateKey(id), {}) };
+}
+
+export function profileReport(id = activeProfile().id): ProfileReport {
+  const s = stateFor(id);
+  const now = Date.now();
+  const ranked = rankTopics(Object.keys(s.conceptProfile).length >= 5 ? s.conceptProfile : s.profile, now);
+  const week = s.history.filter((h) => now - h.at < 7 * DAY);
+  const isActive = id === activeProfile().id;
+  const h = isActive ? poolHealth(s.pool, ctx()) : null;
+  return {
+    profile: listProfiles().find((p) => p.id === id) ?? activeProfile(),
+    into: ranked.filter((t) => t.score > 0.05).slice(0, 10).map((t) => t.name),
+    notLanding: ranked.filter((t) => t.score < -0.05).slice(-5).reverse().map((t) => t.name),
+    taste: s.taste,
+    told: { pinned: s.pinned, rules: s.rules, customRows: s.customRows },
+    recent: s.history.slice(-8).reverse().map((w) => ({ title: w.title, channel: w.channelTitle, at: w.at, fraction: w.fraction })),
+    watchedTotal: s.history.length,
+    minutesThisWeek: Math.round(week.reduce((a, w) => a + w.watchedSec, 0) / 60),
+    videosThisWeek: week.length,
+    pool: h ? { total: h.total, fresh: h.freshMain, described: h.described } : null,
+  };
+}
+
+/** Add a standing instruction for Claude, or forget something, for any profile on this device. */
+export function guideProfile(id: string, change: { addRule?: string; forget?: { kind: 'row' | 'interest' | 'rule'; value: string } }) {
+  const isActive = id === activeProfile().id;
+  const s = stateFor(id);
+  const rule = change.addRule?.trim();
+  if (rule && !s.rules.some((r) => r.toLowerCase() === rule.toLowerCase())) s.rules = [...s.rules, rule].slice(-20);
+  const f = change.forget;
+  if (f?.kind === 'row') s.customRows = s.customRows.filter((r) => r.id !== f.value);
+  if (f?.kind === 'interest') s.pinned = s.pinned.filter((p) => p !== f.value);
+  if (f?.kind === 'rule') s.rules = s.rules.filter((p) => p !== f.value);
+  if (isActive) persist();
+  else save(stateKey(id), s);
 }

@@ -495,3 +495,60 @@ export async function suggestAsks(auth: ClaudeAuth, input: PlannerInput): Promis
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('No suggestions');
   return res.parsed_output.suggestions.slice(0, 12);
 }
+
+// ---------------------------------------------------------------- guidance ideas for a profile
+
+const Guidance = z.object({
+  ideas: z
+    .array(
+      z.object({
+        instruction: z.string().describe('A standing instruction for Wander, written as the grown-up would say it, under 20 words.'),
+        why: z.string().describe('One short sentence: what in the report suggests this.'),
+      }),
+    )
+    .describe('4 to 6 ideas.'),
+});
+export type GuidanceIdea = z.infer<typeof Guidance>['ideas'][number];
+
+export interface GuidanceInput {
+  name: string;
+  kid: boolean;
+  into: string[];
+  notLanding: string[];
+  tasteSummary: string;
+  recentTitles: string[];
+  rules: string[];
+  minutesThisWeek: number;
+}
+
+/** Suggest standing instructions a grown-up could give Wander for this profile. */
+export async function suggestGuidance(auth: ClaudeAuth, input: GuidanceInput): Promise<GuidanceIdea[]> {
+  const res = await client(auth).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 4000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(Guidance) },
+    system: `You help a grown-up steer Wander, a YouTube app that plans varied feeds, for one viewer. From a report of what the viewer watches, suggest standing instructions they could add. Instructions are followed every time Wander plans what to show.
+Good ideas: build bridges out of what the viewer loves now into nearby real-world topics; widen variety where viewing is narrow; lean into formats that clearly land; gently counter anything that looks like a rut. Each idea must be concrete and specific to this report, never generic. Don't repeat instructions they already have.${
+      input.kid
+        ? '\nThis viewer is a young child (about 5–8). Ideas should help curiosity, creativity and calm, age-appropriate viewing, follow the child\'s current passions rather than fight them, and never use shame or bans.'
+        : ''
+    }`,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          `Viewer: ${input.name}${input.kid ? ' (a young child)' : ''}`,
+          `Into right now: ${input.into.join(', ') || 'not known yet'}`,
+          `Not landing: ${input.notLanding.join(', ') || 'nothing clear'}`,
+          `Claude's read on their taste: ${input.tasteSummary || 'none yet'}`,
+          `Recently watched: ${input.recentTitles.join(' | ') || 'nothing yet'}`,
+          `Watched this week: ${input.minutesThisWeek} minutes`,
+          `Instructions they already have: ${input.rules.join(' | ') || 'none'}`,
+        ].join('\n'),
+      },
+    ],
+  });
+  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude had no ideas this time.');
+  return res.parsed_output.ideas;
+}
