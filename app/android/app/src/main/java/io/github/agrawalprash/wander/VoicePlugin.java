@@ -104,7 +104,12 @@ public class VoicePlugin extends Plugin {
             holdError = null;
             finished = false;
             stopCall = null;
-            holdRecognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            // Prefer Google's speech service: it streams words while you speak. Some phones'
+            // default services (e.g. Samsung's) only return the text at the end.
+            android.content.ComponentName google = googleRecognizer();
+            holdRecognizer = google != null
+                ? SpeechRecognizer.createSpeechRecognizer(getContext(), google)
+                : SpeechRecognizer.createSpeechRecognizer(getContext());
             holdRecognizer.setRecognitionListener(new RecognitionListener() {
                 @Override public void onReadyForSpeech(Bundle params) { notifyListeners("holdReady", new JSObject()); }
                 @Override public void onBeginningOfSpeech() { }
@@ -234,5 +239,16 @@ public class VoicePlugin extends Plugin {
         if (tts != null) tts.shutdown();
         tts = null;
         ttsReady = false;
+    }
+
+    /** Google's recognition service, if this device has it. */
+    private android.content.ComponentName googleRecognizer() {
+        Intent probe = new Intent(android.speech.RecognitionService.SERVICE_INTERFACE);
+        for (android.content.pm.ResolveInfo r : getContext().getPackageManager().queryIntentServices(probe, 0)) {
+            if (r.serviceInfo != null && "com.google.android.googlequicksearchbox".equals(r.serviceInfo.packageName)) {
+                return new android.content.ComponentName(r.serviceInfo.packageName, r.serviceInfo.name);
+            }
+        }
+        return null;
     }
 }
