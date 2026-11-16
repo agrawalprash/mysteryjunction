@@ -246,7 +246,7 @@ async function runDirections(directions: Direction[], keys: ApiKeys, onProgress:
 }
 
 /** Ask Claude to describe the videos that could actually be shown and aren't described yet. */
-async function describe(found: Candidate[], auth: ClaudeAuth | null, onProgress: (msg: string) => void, limit = MAX_DESCRIBE) {
+async function describe(found: Candidate[], auth: ClaudeAuth | null, onProgress: (msg: string) => void, limit = MAX_DESCRIBE, batch?: number) {
   if (!auth) return;
   // Undescribed videos can't pass the kid check yet, so pick what to describe without it.
   const kid = !!ctx().kidCheck;
@@ -263,7 +263,7 @@ async function describe(found: Candidate[], auth: ClaudeAuth | null, onProgress:
     .slice(0, limit);
   if (todo.length === 0) return;
   onProgress(`Claude is looking at ${todo.length} videos…`);
-  const facets = await describeVideos(auth, todo, conceptVocabulary());
+  const facets = await describeVideos(auth, todo, conceptVocabulary(), batch);
   for (const v of found) if (facets[v.id]) v.facets = facets[v.id];
 }
 
@@ -777,7 +777,7 @@ export async function search(q: string, keys: ApiKeys): Promise<Candidate[]> {
   if (activeProfile().options.contentCheck) {
     // Kid profiles: Claude checks search results before any are shown.
     const auth = claudeAuth(keys);
-    if (auth) await describe(results, auth, () => undefined);
+    if (auth) await describe(results, auth, () => undefined, results.length, 8);
     results = results.filter((r) => r.facets?.kidSafe === true);
   }
   mergePool(results);
@@ -1061,12 +1061,28 @@ export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m
     query: place.query,
     fetchedAt: now,
   }));
-  // Claude describes them (and checks them for kid profiles) before they're shown.
-  await describe(found, claudeAuth(keys), () => undefined, found.length);
-  if (gen !== generation) return { videos: [] };
-  mergePool(found);
-  // Kept without descriptions, to stay small.
-  state.mapVideos[id] = { at: now, videos: found.map((v) => ({ ...v, description: undefined })) };
+  const auth = claudeAuth(keys);
+  const keep = () => {
+    mergePool(found);
+    // Kept without descriptions, to stay small.
+    state.mapVideos[id] = { at: now, videos: found.map((v) => ({ ...v, description: undefined })) };
+  };
+  if (activeProfile().options.contentCheck) {
+    // Kid profiles: Claude checks every video before any is shown (small batches, in parallel).
+    onProgress('Checking the videos…');
+    await describe(found, auth, () => undefined, found.length, 8);
+    if (gen !== generation) return { videos: [] };
+  } else {
+    // Show them now; Claude describes them in the background for learning.
+    void describe(found, auth, () => undefined, found.length, 10)
+      .then(() => {
+        if (gen !== generation) return;
+        keep();
+        persist();
+      })
+      .catch(() => undefined);
+  }
+  keep();
   const keys_ = Object.keys(state.mapVideos);
   if (keys_.length > PLACES_KEPT) {
     for (const k of keys_.sort((a, b) => state.mapVideos[a].at - state.mapVideos[b].at).slice(0, keys_.length - PLACES_KEPT)) delete state.mapVideos[k];

@@ -270,10 +270,11 @@ Concepts are how the app relates videos to each other and to the viewer's taste,
 const TAG_BATCH = 40;
 
 /** Describe videos in parallel batches. Returns facets by video id; missing entries just stay unlabelled. */
-export async function describeVideos(auth: ClaudeAuth, videos: Candidate[], vocabulary: string[] = []): Promise<Record<string, Facets>> {
+/** `batch`: videos per request; smaller batches run in parallel and finish sooner when someone is waiting. */
+export async function describeVideos(auth: ClaudeAuth, videos: Candidate[], vocabulary: string[] = [], batch = TAG_BATCH): Promise<Record<string, Facets>> {
   const out: Record<string, Facets> = {};
   const batches: Candidate[][] = [];
-  for (let i = 0; i < videos.length; i += TAG_BATCH) batches.push(videos.slice(i, i + TAG_BATCH));
+  for (let i = 0; i < videos.length; i += batch) batches.push(videos.slice(i, i + batch));
   await Promise.all(
     batches.map(async (batch) => {
       const list = batch
