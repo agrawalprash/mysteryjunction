@@ -389,3 +389,31 @@ body.tv .term { font-size: 1.05rem; }
 .chip-mood { border: 1px solid var(--accent-2); }
 .list-title { margin: 14px 16px 2px; font-size: 15px; color: var(--muted); }
 body.tv .list-title { margin-left: 0; font-size: 1.4rem; }
+/* Remote mode (phone) */
+.link-dot { width: 10px; height: 10px; border-radius: 50%; background: #555; margin-right: 8px; }
+.link-dot-ok { background: var(--good); }
+.link-dot-bad { background: var(--bad); }
+.remote-mic-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 18px 0 6px; }
+.remote-mic {
+  width: 132px; height: 132px; border-radius: 50%; border: 0; font-size: 52px; cursor: pointer;
+  background: var(--brand); color: #0f0f0f; box-shadow: 0 8px 28px rgba(255, 176, 32, 0.35);
+  touch-action: manipulation; user-select: none;
+}
+.remote-mic:active, .remote-mic-on { transform: scale(0.96); box-shadow: 0 0 0 10px rgba(255, 176, 32, 0.25); }
+.remote-mic-on { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 18px rgba(255, 176, 32, 0.12); } }
+.remote-status { text-align: center; }
+.dpad {
+  position: relative; width: 232px; height: 232px; margin: 14px auto; border-radius: 50%;
+  background: var(--surface); display: grid; grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+}
+.dpad-btn, .dpad-ok { border: 0; background: none; color: var(--text); font-size: 24px; cursor: pointer; touch-action: manipulation; }
+.dpad-btn:active { color: var(--brand); }
+.dpad-up { grid-area: 1 / 2; }
+.dpad-left { grid-area: 2 / 1; }
+.dpad-right { grid-area: 2 / 3; }
+.dpad-down { grid-area: 3 / 2; }
+.dpad-ok { grid-area: 2 / 2; margin: 6px; border-radius: 50%; background: var(--surface-2); font-size: 18px; font-weight: 700; }
+.dpad-ok:active { background: #3a3a3a; }
+.remote-row { display: flex; justify-content: center; gap: 10px; margin: 10px 16px; }
+.remote-row .btn { flex: 1; max-width: 140px; padding: 12px 0; }

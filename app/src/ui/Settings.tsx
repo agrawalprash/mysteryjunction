@@ -273,6 +273,15 @@ export function Settings({
           </select>
         </label>
         <p className="muted small">The language Wander searches in. The app itself is always in English.</p>
+        {!tv && (
+          <label className="field">
+            <span>Open in TV remote mode when linked</span>
+            <select value={prefs.remoteOnStart ? 'on' : 'off'} onChange={(e) => set({ remoteOnStart: e.target.value === 'on' })}>
+              <option value="on">Yes</option>
+              <option value="off">No</option>
+            </select>
+          </label>
+        )}
       </section>
 
       <section className="panel">
