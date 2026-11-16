@@ -20,8 +20,9 @@ const PLAYFUL = `
 THIS VIEWER IS A YOUNG CHILD (about 5–8 years old), watching with a grown-up's permission.
 - Safety first: only choose directions and videos that are clearly made for or suitable for young children. No scary, violent, crude, romantic, prank, challenge or shock content, no unboxing/toy ads, no "kid influencer" channels, no clickbait. When unsure, leave it out.
 - Be playful and creative: think like a great children's librarian or museum guide. Favour wonder, making things, animals, nature, how things work, stories, music and gentle humour.
+- When the child asks for something specific (a game, a character, an animal), give them exactly that, within the safety rules; never swap it for something "better". Bridges come in addition, never instead.
 - Follow what they love right now, whatever it is (a game, a character, an animal); never treat it as a problem. Build bridges out of it: real-world topics that start from that love (a building game → real caves, volcanoes, architecture; dinosaurs → fossils, birds).
-- Prefer calm pacing and short videos (under about 15 minutes). Avoid hyperactive, shouty, fast-cut videos.
+- Prefer calmer, shorter videos (under about 15 minutes) when there's a choice, but don't drop a topic the child asked for just because most of its videos are lively.
 - Anything you write that the child sees or hears (replies, row titles, reasons) uses short, simple, warm words a 6-year-old understands, with a sense of adventure.`;
 
 /** A system prompt, adjusted for the active profile. */
@@ -255,7 +256,7 @@ const Tag = z.object({
   clickbait: z.boolean().describe('True if the title/description look sensational, misleading or low-effort.'),
   kid_safe: z
     .boolean()
-    .describe('True only if this is clearly suitable for a young child (about 5–8) to watch alone: no violence, scares, crude or sexual content, bad language, pranks/challenges, shock, toy-ad or unboxing content, or kid-influencer channels. When unsure, false.'),
+    .describe('True if a young child (about 5–8) could watch this alone: no violence or gore, horror or scares, crude or sexual content, bad language, dangerous pranks or challenges, shock or rage bait, toy ads or unboxing. Ordinary, clean gameplay, building, crafts, animals, science and fun are fine, including popular games like Minecraft. False if the title or channel suggests any of the excluded things.'),
   concepts: z
     .array(z.string())
     .describe('3–8 short lowercase concept tags (subject areas, places, crafts, eras, moods, e.g. "maritime history", "west africa", "slow craft"). Reuse tags from the given vocabulary when they fit.'),
@@ -608,8 +609,11 @@ export async function goodbyeIdea(auth: ClaudeAuth, watchedToday: string[]): Pro
 const MapPlace = z.object({
   name: z.string().describe('Short name, 1–4 words, title case.'),
   desc: z.string().describe('One line, under 10 words, saying what is there.'),
-  query: z.string().describe('A YouTube search query that finds good videos about this place.'),
+  query: z.string().describe("A YouTube search query that finds good videos about this place. It must contain the place's own name."),
   concepts: z.array(z.string()).describe('2–5 lowercase concept tags for it (like "roman engineering", "water").'),
+  channels: z
+    .array(z.string())
+    .describe('2–3 real YouTube channel handles (like "@veritasium") that regularly post good videos about exactly this place. Empty if unsure.'),
 });
 const MapLevel = z.object({
   children: z.array(MapPlace).describe('The places inside, 6–12, together covering this place well, from best-known to less obvious.'),
@@ -653,7 +657,8 @@ const Route = z.object({
     .object({
       path: z.array(z.string()).describe('Full path from a top-level area to the place, ending with its own name, e.g. ["Nature", "Landforms", "Mountains"]. Reuse existing names exactly.'),
       desc: z.string().describe('One line, under 10 words.'),
-      query: z.string().describe('A YouTube search query that finds good videos about it.'),
+      query: z.string().describe("A YouTube search query that finds good videos about it. It must contain the place's own name (what the viewer asked for)."),
+      channels: z.array(z.string()).describe('2–3 real YouTube channel handles that regularly post good videos about exactly this. Empty if unsure.'),
       concepts: z.array(z.string()).describe('2–5 lowercase concept tags.'),
     })
     .describe('For place: where it lives on the map. For others: any values (ignored).'),
@@ -693,4 +698,20 @@ export async function routeAsk(auth: ClaudeAuth, input: RouteInput): Promise<Rou
   });
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error(`Couldn’t route that (${res.stop_reason ?? 'no answer'}).`);
   return res.parsed_output;
+}
+
+// ---------------------------------------------------------------- channels for a place (for places drawn before channels existed)
+
+const PlaceChannels = z.object({ channels: z.array(z.string()).describe('2–3 real YouTube channel handles like "@veritasium". Empty if unsure.') });
+
+export async function placeChannels(auth: ClaudeAuth, path: string[]): Promise<string[]> {
+  const res = await client(auth).beta.messages.parse({
+    model: FAST_MODEL,
+    max_tokens: 2000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(PlaceChannels) },
+    system: forProfile('Name YouTube channels that regularly post good videos about exactly the given topic. Only real channels you are confident exist, as @handles.'),
+    messages: [{ role: 'user', content: `Topic: ${path.join(' › ')}` }],
+  });
+  return res.parsed_output?.channels ?? [];
 }

@@ -241,6 +241,23 @@ export async function channelUploads(channelIds: string[], key: string, perChann
   return ids.length ? videoDetails([...new Set(ids)], key) : [];
 }
 
+/** All recent uploads (up to 50 each) from channels named by handle, with details: a few units, no search. */
+export async function uploadsFromHandles(handles: string[], key: string): Promise<Video[]> {
+  const ids: string[] = [];
+  for (const h of handles.slice(0, 3)) {
+    try {
+      const playlist = await uploadsPlaylist(h, key);
+      if (playlist) ids.push(...(await recentUploads(playlist, key)));
+    } catch (e) {
+      if (e instanceof YouTubeError && e.status === 403) throw e;
+    }
+  }
+  const unique = [...new Set(ids)];
+  const out: Video[] = [];
+  for (let i = 0; i < unique.length; i += 50) out.push(...(await videoDetails(unique.slice(i, i + 50), key)));
+  return out;
+}
+
 /** Cheap call (1 unit) to check a key works. */
 export async function testKey(key: string): Promise<void> {
   await call('videos', { part: 'id', id: 'jNQXAC9IVRw' }, key, 1);
