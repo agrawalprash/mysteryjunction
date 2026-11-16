@@ -25,9 +25,9 @@ import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } f
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
 import { AUTO_BUDGET, channelUploads, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
-import { askWander, describeVideos, explainPicks, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
+import { askWander, describeVideos, explainPicks, planDay, planSurprise, routeAsk, writeTasteProfile, type ClaudeAuth, type PlannerInput } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
-import { pathId, type MapPlace } from './map.ts';
+import { addPlace, pathId, similarPlaces, topAreas, type MapPlace } from './map.ts';
 import { getSettings } from './settings.ts';
 import { timeStatus, type TimeStatus } from './screenTime.ts';
 import { activeProfile, deleteProfile, listProfiles, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
@@ -64,8 +64,6 @@ interface State {
   conceptProfile: Profile;
   /** The on-device ranking model. */
   weights: Weights;
-  /** Claude's suggestions for the Ask panel. */
-  suggestions: { at: number; items: Suggestion[] } | null;
   lastRefill: number;
   watchesSinceRefill: number;
   /** Explore's map: places opened, videos watched from each place, and fetched videos per place. */
@@ -97,7 +95,6 @@ function fresh(): State {
     setCosts: [],
     conceptProfile: {},
     weights: initialWeights(),
-    suggestions: null,
     lastRefill: 0,
     watchesSinceRefill: 0,
     mapVisits: {},
@@ -583,21 +580,6 @@ export function searchPool(q: string): Candidate[] {
   return matchPool(state.pool, ctx(), q, [], 12).filter((c) => c.tier !== 'shorts');
 }
 
-/** Claude's tappable suggestions for the Ask panel, refreshed about daily. */
-export async function getSuggestions(keys: ApiKeys, force = false): Promise<Suggestion[]> {
-  const cached = state.suggestions;
-  if (!force && cached && Date.now() - cached.at < 20 * 60 * 60 * 1000 && cached.items.length) return cached.items;
-  const auth = claudeAuth(keys);
-  if (!auth) return cached?.items ?? [];
-  try {
-    const items = await suggestAsks(auth, plannerInput());
-    state.suggestions = { at: Date.now(), items };
-    persist();
-    return items;
-  } catch {
-    return cached?.items ?? [];
-  }
-}
 
 /** Remove something you told Wander, from Settings. */
 export function forget(kind: 'row' | 'interest' | 'rule', value: string) {
@@ -927,6 +909,8 @@ export interface ExploreResult {
   /** A new set is waiting on Home. */
   newSet?: boolean;
   notice?: string;
+  /** Claude took this as a place to explore: open it on the map. */
+  place?: string[];
 }
 
 /** A plain search: what's in the pool now, then YouTube's results. */
@@ -940,7 +924,21 @@ export async function exploreSearch(keys: ApiKeys, q: string): Promise<ExploreRe
 /** Anything typed or said in Explore: Claude decides whether it's a search or a change, and acts. */
 export async function exploreAsk(keys: ApiKeys, text: string, onProgress: (msg: string) => void, browsing?: string[]): Promise<ExploreResult> {
   const t = text.trim();
-  if (!claudeAuth(keys)) return exploreSearch(keys, t);
+  const auth = claudeAuth(keys);
+  if (!auth) return exploreSearch(keys, t);
+  // A quick first decision (fast model): a place to explore, a specific search, or a change.
+  onProgress('Claude is listening…');
+  const route = await routeAsk(auth, { request: t, topAreas: topAreas().map((a) => a.name), browsing, similar: similarPlaces(t) });
+  if (route.kind === 'place' && route.place.path.length) {
+    const path = route.place.path.map((x) => x.trim()).filter(Boolean);
+    addPlace({ name: path[path.length - 1], desc: route.place.desc, query: route.place.query, concepts: route.place.concepts, path }, browsing);
+    return { text: t, reply: route.reply, poolHits: [], results: [], focus: [], place: path };
+  }
+  if (route.kind === 'search' && route.search.trim()) {
+    onProgress(`Searching for “${route.search}”…`);
+    return { ...(await exploreSearch(keys, route.search.trim())), text: t, reply: route.reply };
+  }
+  // A lasting change or a mood: the main model works out exactly what to change.
   const out = await ask(keys, t, onProgress, browsing);
   if (out.search) {
     onProgress(`Searching for “${out.search}”…`);

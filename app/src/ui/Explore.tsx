@@ -3,7 +3,6 @@ import type { Candidate } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
 import {
   exploreAsk,
-  getSuggestions,
   noteOpenedFrom,
   placeMark,
   placesVisitedIn,
@@ -15,7 +14,6 @@ import {
 } from '../lib/wander.ts';
 import { claudeAuth } from '../lib/keys.ts';
 import { drawAhead, findPlace, levelOf, pathId, savedLevel, topAreas, type MapLevel, type MapPlace } from '../lib/map.ts';
-import type { Suggestion } from '../lib/claude.ts';
 import { listen } from '../lib/voice.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { TimeChip } from './TimeChip.tsx';
@@ -98,13 +96,11 @@ function AskBar({
   keys,
   openResults,
   browsing,
-  suggestions = [],
 }: {
   keys: ApiKeys;
   openResults: () => void;
   /** The place on the map this page shows, so "more like this" means here. */
   browsing?: string[];
-  suggestions?: Suggestion[];
 }) {
   const tv = useTv();
   const [text, setText] = useState('');
@@ -153,20 +149,6 @@ function AskBar({
         </form>
       </div>
       {voiceError && <p className="small error-text">{voiceError}</p>}
-      {suggestions.length > 0 && (
-        <div className="chip-row wrap">
-          {suggestions.slice(0, 6).map((s) => (
-            <button key={s.label} className={`chip${s.kind === 'new' ? ' chip-new' : s.kind === 'mood' ? ' chip-mood' : ''}`} onClick={() => submit(s.label)}>
-              {s.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {view.kind !== 'idle' && !browsing && (
-        <button className="btn btn-ghost last-ask" onClick={openResults}>
-          {view.kind === 'busy' ? `Working on “${view.text}”…` : `Last ask: “${view.result.text}”`} →
-        </button>
-      )}
     </section>
   );
 }
@@ -189,10 +171,6 @@ export function ExploreHub({
   openResults: () => void;
 }) {
   const tv = useTv();
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  useEffect(() => {
-    if (keys.anthropic) getSuggestions(keys).then(setSuggestions).catch(() => undefined);
-  }, [keys]);
   const recent = recentPlaces(4);
   // The top level is drawn by Claude the first time (per profile kind), then saved.
   const [areas, setAreas] = useState<MapPlace[]>(topAreas());
@@ -218,7 +196,7 @@ export function ExploreHub({
   return (
     <div className="screen explore">
       <Topbar title="Explore" onBack={onBack} />
-      <AskBar keys={keys} openResults={openResults} suggestions={suggestions} />
+      <AskBar keys={keys} openResults={openResults} />
       {tv && <p className="muted small explore-hint">Or hold the touchpad on your phone remote and say it.</p>}
 
       {recent.length > 0 && (
@@ -390,7 +368,10 @@ export function MapPage({
                 <button key={c.name} className="place-tile" onClick={() => goTo(c.path)}>
                   <Mark mark={placeMark(c.path)} />
                   <span className="place-text">
-                    <span className="place-name">{c.name}</span>
+                    <span className="place-name">
+                      {c.name}
+                      {c.added && <span className="tag">added by you</span>}
+                    </span>
                     <span className="place-desc">{c.desc}</span>
                   </span>
                 </button>
@@ -422,9 +403,25 @@ export function MapPage({
 
 // ---------------------------------------------------------------- an Ask's results
 
-export function ResultsPage({ onBack, goHome, open }: { onBack: () => void; goHome: () => void; open: (v: Candidate) => void }) {
+export function ResultsPage({
+  onBack,
+  goHome,
+  open,
+  openPlace,
+}: {
+  onBack: () => void;
+  goHome: () => void;
+  open: (v: Candidate) => void;
+  /** Claude took the ask as a place: open it instead of this page. */
+  openPlace: (path: string[]) => void;
+}) {
   const view = useAskView();
   const tv = useTv();
+  const placeTo = view.kind === 'done' ? view.result.place : undefined;
+  useEffect(() => {
+    if (placeTo) openPlace(placeTo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeTo]);
   // On the TV, land on the first result when it arrives.
   useEffect(() => {
     if (tv && view.kind === 'done') window.setTimeout(() => focusFirst('.results-page .row .card'), 80);

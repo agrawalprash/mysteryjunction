@@ -483,31 +483,6 @@ Write for a non-technical owner. Menu paths should match Android TV's English se
   return res.parsed_output;
 }
 
-// ---------------------------------------------------------------- Ask suggestions
-
-const Suggestions = z.object({
-  suggestions: z
-    .array(z.object({ label: z.string().describe('2–6 words, inviting, specific.'), kind: z.enum(['more', 'new', 'mood']) }))
-    .describe('10 suggestions: about 4 "more" (deeper into known interests), 4 "new" (adjacent or fresh directions), 2 "mood" (a feeling or format, e.g. "something calm and slow").'),
-});
-export type Suggestion = z.infer<typeof Suggestions>['suggestions'][number];
-
-/** Short things the viewer might want to ask for, based on their taste. No YouTube calls. */
-export async function suggestAsks(auth: ClaudeAuth, input: PlannerInput): Promise<Suggestion[]> {
-  const res = await client(auth).beta.messages.parse({
-    model: MODEL,
-    max_tokens: 4000,
-    ...FALLBACK,
-    output_config: { effort: 'low', format: betaZodOutputFormat(Suggestions) },
-    system: forProfile(
-      'You suggest things a viewer could ask their YouTube app for right now, as tappable chips. Base them on what you know about their taste, but keep them varied: some deeper into what they love, some genuinely new directions, and a couple of moods. Be specific and enticing ("Edo-period carpentry", "Live sessions from Lagos"), not generic ("Music", "Science").',
-    ),
-    messages: [{ role: 'user', content: describeViewer(input) }],
-  });
-  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('No suggestions');
-  return res.parsed_output.suggestions.slice(0, 12);
-}
-
 // ---------------------------------------------------------------- guidance ideas for a profile
 
 const Guidance = z.object({
@@ -663,5 +638,59 @@ export async function mapChildren(auth: ClaudeAuth, path: string[], areas: strin
     messages: [{ role: 'user', content: top ? 'Place: the whole map (draw the top-level areas)' : `Place: ${path.join(' › ')}` }],
   });
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude couldn’t draw this part of the map.');
+  return res.parsed_output;
+}
+
+// ---------------------------------------------------------------- what did they mean? (fast)
+
+const Route = z.object({
+  kind: z
+    .enum(['place', 'search', 'change'])
+    .describe('place: a topic or area to explore ("mountains", "more about volcanoes", "how bridges work"). search: a specific video, channel or person to find ("that Veritasium video about mirrors"). change: a lasting change or a mood for the home feed ("no more true crime", "add a jazz row", "fresh set", "something funny today", "remember I love F1").'),
+  reply: z.string().describe('One short, friendly sentence saying what you are doing.'),
+  search: z.string().describe('For search: the YouTube search query. Otherwise empty.'),
+  place: z
+    .object({
+      path: z.array(z.string()).describe('Full path from a top-level area to the place, ending with its own name, e.g. ["Nature", "Landforms", "Mountains"]. Reuse existing names exactly.'),
+      desc: z.string().describe('One line, under 10 words.'),
+      query: z.string().describe('A YouTube search query that finds good videos about it.'),
+      concepts: z.array(z.string()).describe('2–5 lowercase concept tags.'),
+    })
+    .describe('For place: where it lives on the map. For others: any values (ignored).'),
+});
+export type RouteResult = z.infer<typeof Route>;
+
+export interface RouteInput {
+  request: string;
+  topAreas: string[];
+  /** Where the viewer is on the map right now, if anywhere. */
+  browsing?: string[];
+  /** Existing places whose names look related, as full paths. */
+  similar: string[][];
+}
+
+/** Decide quickly what the viewer meant: a place to explore, a specific search, or a change. */
+export async function routeAsk(auth: ClaudeAuth, input: RouteInput): Promise<RouteResult> {
+  const res = await client(auth).beta.messages.parse({
+    model: FAST_MODEL,
+    max_tokens: 2000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(Route) },
+    system: forProfile(
+      `You route what a viewer says to Wander, a YouTube app with a map of everything worth watching (a tree of places, like library sections). Most requests are places to explore. For a place, put it in its natural home on the map, not simply inside wherever the viewer is now, unless it truly belongs there. If one of the existing similar places is the same thing, return its path exactly instead of making a new one. Expect voice transcription slips.`,
+    ),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          `Viewer said: "${input.request}"`,
+          `Top-level areas: ${input.topAreas.join(', ')}`,
+          `Viewer is at: ${input.browsing?.length ? input.browsing.join(' › ') : 'the start of Explore'}`,
+          `Existing places that may be related: ${input.similar.map((p) => p.join(' › ')).join(' | ') || 'none'}`,
+        ].join('\n'),
+      },
+    ],
+  });
+  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude didn’t catch that. Try saying it differently.');
   return res.parsed_output;
 }
