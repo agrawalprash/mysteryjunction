@@ -7,9 +7,11 @@ export interface Settings {
   tvMode: 'auto' | 'on' | 'off';
   /** Language for searches and Claude's topic picks. The app itself is always English. */
   language: string;
+  /** On a phone linked to a TV, open straight into the TV remote. */
+  remoteOnStart: boolean;
 }
 
-const DEFAULTS: Settings = { tvMode: 'auto', language: 'en' };
+const DEFAULTS: Settings = { tvMode: 'auto', language: 'en', remoteOnStart: true };
 
 export function getSettings(): Settings {
   return { ...DEFAULTS, ...load<Partial<Settings>>('settings', {}) };

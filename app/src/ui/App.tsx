@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { App as CapApp } from '@capacitor/app';
 import { claudeAuth, loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
 import { diagSnapshot, sayDiag, startDiag, stopDiag } from '../lib/diagStore.ts';
-import { startLinkServer, type LinkMessage } from '../lib/link.ts';
+import { linkedTv, startLinkServer, type LinkMessage } from '../lib/link.ts';
 import { ask, getTold, mergeTold, newSet, onResume, search, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
 import { controlPlayer, nowPlaying } from '../lib/nowPlaying.ts';
 import { checkForUpdate, installUpdate } from '../lib/updater.ts';
@@ -19,7 +19,7 @@ function compactFeed(feed: DailyFeed | null) {
 import { onToast, toast } from '../lib/toast.ts';
 import { detectTv } from '../lib/device.ts';
 import { getSettings } from '../lib/settings.ts';
-import { enableSpatialNav, focusFirst } from '../lib/spatialNav.ts';
+import { enableSpatialNav, focusFirst, remoteKey } from '../lib/spatialNav.ts';
 import { closeOverlay } from '../lib/overlay.ts';
 import { Setup } from './Setup.tsx';
 import { Home } from './Home.tsx';
@@ -44,6 +44,7 @@ export const useTv = () => useContext(TvContext);
 export function App() {
   const [keys, setKeys] = useState<ApiKeys | null>(null);
   const [deviceIsTv, setDeviceIsTv] = useState(false);
+  const [detected, setDetected] = useState(false);
   const [tvPref, setTvPref] = useState(getSettings().tvMode);
   const [stack, setStack] = useState<Screen[]>([{ kind: 'home' }]);
   const stackRef = useRef(stack);
@@ -67,6 +68,14 @@ export function App() {
       clearTimeout(timer);
     };
   }, []);
+
+  // A linked phone opens straight into remote mode (unless turned off in Settings).
+  const autoRemote = useRef(false);
+  useEffect(() => {
+    if (!detected || autoRemote.current || !keys?.youtube) return;
+    autoRemote.current = true;
+    if (!tv && linkedTv() && getSettings().remoteOnStart) setStack([{ kind: 'home' }, { kind: 'remote' }]);
+  }, [detected, keys, tv]);
 
   // Keep the video pool topped up in the background while the app is open.
   useEffect(() => {
@@ -139,6 +148,13 @@ export function App() {
         case 'home':
           setStack([{ kind: 'home' }]);
           return { ok: true };
+        case 'key':
+          // The phone's D-pad: the same as pressing keys on the TV remote.
+          if (msg.key === 'Back') {
+            if (!closeOverlay() && stackRef.current.length > 1) back();
+          } else if (msg.key === 'Home') setStack([{ kind: 'home' }]);
+          else remoteKey(msg.key);
+          return { ok: true };
         case 'update': {
           const info = await checkForUpdate(true);
           if (!info) return { upToDate: true, version: __APP_VERSION__ };
@@ -168,7 +184,10 @@ export function App() {
 
   useEffect(() => {
     loadKeys().then(setKeys);
-    detectTv().then(setDeviceIsTv);
+    detectTv().then((v) => {
+      setDeviceIsTv(v);
+      setDetected(true);
+    });
   }, []);
 
   useEffect(() => {
@@ -252,7 +271,6 @@ export function App() {
           <RemoteScreen
             keys={keys}
             onBack={back}
-            openSearch={() => push({ kind: 'search', target: 'tv', voice: true })}
             openDiagnose={() => push({ kind: 'settings' })}
           />
         )}

@@ -28,6 +28,7 @@ export type LinkMessage =
   | { type: 'play'; video: Candidate }
   | { type: 'player'; action: PlayerAction | 'close' }
   | { type: 'home' }
+  | { type: 'key'; key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Enter' | 'Back' | 'Home' }
   | { type: 'update' };
 
 // ---------------------------------------------------------------- TV side

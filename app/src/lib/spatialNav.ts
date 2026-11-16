@@ -299,3 +299,16 @@ export function enableSpatialNav() {
     true,
   );
 }
+
+/**
+ * A key press that arrived from the phone remote. It goes through the same path as the
+ * TV remote's own keys: arrows move focus, OK activates (or plays/pauses in the player).
+ */
+export function remoteKey(key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Enter') {
+  const active = document.activeElement;
+  const target: EventTarget = active && active !== document.body ? active : document;
+  const notHandled = target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  // Synthetic key events don't "press" buttons by themselves, so do that for OK.
+  if (key === 'Enter' && notHandled && active instanceof HTMLElement && active !== document.body) active.click();
+  if (key !== 'Enter' && (!active || active === document.body)) focusFirst();
+}
