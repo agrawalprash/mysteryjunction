@@ -4,7 +4,7 @@ import { linkedTv, sendToTv, type LinkMessage } from '../lib/link.ts';
 import type { NowPlaying } from '../lib/nowPlaying.ts';
 import { formatDuration } from '../lib/format.ts';
 import { holdCancel, holdStart, holdStop } from '../lib/voice.ts';
-import { createGestures, type HoldZone } from '../lib/gestures.ts';
+import { createGestures } from '../lib/gestures.ts';
 import { VideoCard } from './VideoCard.tsx';
 import { setOverlayCloser } from '../lib/overlay.ts';
 
@@ -18,7 +18,6 @@ interface TvState {
 }
 
 type Key = Extract<LinkMessage, { type: 'key' }>['key'];
-type VoiceMode = HoldZone;
 
 /** A short buzz, like a physical remote's click. */
 function tick(ms = 12) {
@@ -33,21 +32,13 @@ function tick(ms = 12) {
  * Remote mode: the phone as a gesture remote for Wander on the TV.
  * Swipe = arrows, tap = OK, press and hold = voice search (sent on release).
  */
-export function RemoteScreen({
-  onBack,
-  openDiagnose,
-  openReport,
-}: {
-  onBack: () => void;
-  openDiagnose: () => void;
-  openReport: () => void;
-}) {
+export function RemoteScreen({ onBack }: { onBack: () => void }) {
   const tv = linkedTv();
   const [state, setState] = useState<TvState | null>(null);
   const [feed, setFeed] = useState<DailyFeed | null>(null);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
-  const [voice, setVoice] = useState<{ mode: VoiceMode; text: string; ready: boolean } | null>(null);
+  const [voice, setVoice] = useState<{ text: string; ready: boolean } | null>(null);
   const [more, setMore] = useState(false);
   const [flash, setFlash] = useState('');
   const feedVersion = useRef(-1);
@@ -92,13 +83,11 @@ export function RemoteScreen({
   // ---------------------------------------------------------------- hold to talk
 
   const starting = useRef<Promise<(() => void) | null> | null>(null);
-  const modeRef = useRef<VoiceMode>('search');
 
-  const startVoice = (mode: VoiceMode) => {
+  const startVoice = () => {
     tick(25);
-    modeRef.current = mode;
     setStatus('');
-    setVoice({ mode, text: '', ready: false });
+    setVoice({ text: '', ready: false });
     starting.current = holdStart(
       (text) => setVoice((v) => (v ? { ...v, text } : v)),
       () => setVoice((v) => (v ? { ...v, ready: true } : v)),
@@ -109,7 +98,7 @@ export function RemoteScreen({
     });
   };
 
-  const endVoice = async (zone: HoldZone = modeRef.current) => {
+  const endVoice = async () => {
     const cleanup = await starting.current;
     starting.current = null;
     if (!cleanup) return;
@@ -118,8 +107,7 @@ export function RemoteScreen({
       const said = (await holdStop()).trim();
       setVoice(null);
       if (!said) return;
-      // Released after sliding up: Claude. Released anywhere else: search.
-      await deliver(said, zone === 'ask' ? 'ask' : 'search');
+      await deliver(said);
     } catch (e) {
       setVoice(null);
       setStatus(`✗ ${e instanceof Error ? e.message : String(e)}`);
@@ -128,18 +116,12 @@ export function RemoteScreen({
     }
   };
 
-  /** Send what was said to the TV as a search or as a request to Claude. */
-  const deliver = async (said: string, route: 'search' | 'ask') => {
+  /** Send what was said to the TV: Claude works out whether it's a place, a search or a change. */
+  const deliver = async (said: string) => {
     try {
-      if (route === 'search') {
-        setStatus(`🔎 Searching: “${said}”…`);
-        const r = (await sendToTv({ type: 'search', q: said })) as { count?: number };
-        setStatus(`🔎 ${r.count ?? ''} results for “${said}” on the TV. Swipe to pick, tap to play.`);
-      } else {
-        setStatus(`✦ Asking Claude: “${said}”…`);
-        const r = (await sendToTv({ type: 'ask', text: said })) as { reply?: string; changes?: string[] };
-        setStatus(`✦ ${r.reply ?? 'Done.'}${r.changes?.length ? ` (${r.changes.join(', ')})` : ''}`);
-      }
+      setStatus(`✦ “${said}”…`);
+      const r = (await sendToTv({ type: 'ask', text: said })) as { reply?: string; changes?: string[] };
+      setStatus(`✦ ${r.reply ?? 'Done.'}${r.changes?.length ? ` (${r.changes.join(', ')})` : ''}`);
     } catch (e) {
       setStatus(`✗ ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -159,13 +141,8 @@ export function RemoteScreen({
       createGestures({
         step: (d) => key(d),
         tap: () => key('Enter'),
-        holdStart: () => startVoice('auto'),
-        holdZone: (z) => {
-          modeRef.current = z;
-          tick(8);
-          setVoice((v) => (v ? { ...v, mode: z } : v));
-        },
-        holdEnd: (z) => void endVoice(z),
+        holdStart: () => startVoice(),
+        holdEnd: () => void endVoice(),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -219,11 +196,8 @@ export function RemoteScreen({
 
         {voice ? (
           <div className="touchpad-voice">
-            <div className="touchpad-mic">{voice.mode === 'ask' ? '✦' : '🔎'}</div>
-            <div>{voice.mode === 'ask' ? 'Release to ask Claude' : 'Release to search'}</div>
-            <div className={`zone zone-bottom${voice.mode === 'ask' ? ' zone-on' : ''}`}>
-              {voice.mode === 'ask' ? '✦ Ask Claude' : '↓ Slide down here to ask Claude'}
-            </div>
+            <div className="touchpad-mic">🎤</div>
+            <div>Release to send</div>
           </div>
         ) : (
           <div className="touchpad-hint">
@@ -268,19 +242,6 @@ export function RemoteScreen({
             <div className="remote-actions">
               <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'newSet' }, '↻ New set on the TV.'))}>
                 ↻ New set
-              </button>
-              <button
-                className="btn btn-ghost"
-                onClick={() => {
-                  setMore(false);
-                  setOverlayCloser(null);
-                  openReport();
-                }}
-              >
-                📊 Profile reports
-              </button>
-              <button className="btn btn-ghost" onClick={openDiagnose}>
-                🩺 Diagnose TV
               </button>
             </div>
             {error && <p className="small error-text">{error}</p>}

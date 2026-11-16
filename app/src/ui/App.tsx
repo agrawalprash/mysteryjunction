@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import { claudeAuth, loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
 import { diagSnapshot, sayDiag, startDiag, stopDiag } from '../lib/diagStore.ts';
 import { linkedTv, startLinkServer, type LinkMessage } from '../lib/link.ts';
-import { currentProfile, exploreAsk, exploreSearch, getTold, guideProfile, profileReport, mergeTold, newSet, onResume, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
+import { currentProfile, exploreAsk, getTold, guideProfile, profileReport, mergeTold, newSet, onResume, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
 import { controlPlayer, nowPlaying } from '../lib/nowPlaying.ts';
 import { checkForUpdate, installUpdate } from '../lib/updater.ts';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
@@ -189,12 +189,6 @@ export function App() {
         case 'guide':
           guideProfile(msg.profileId, { addRule: msg.addRule, forget: msg.forget });
           return { profiles: listProfiles(), active: currentProfile().id, report: profileReport(msg.profileId) };
-        case 'search': {
-          if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
-          showExplore();
-          const r = await runExplore(() => exploreSearch(k, msg.q), msg.q);
-          return { count: r.results.length + r.poolHits.length };
-        }
         case 'ask': {
           if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
           showExplore();
@@ -310,15 +304,18 @@ export function App() {
           />
         )}
         {current.kind === 'results' && (
-          <ResultsPage onBack={back} goHome={() => setStack([{ kind: 'home' }])} open={(v) => push({ kind: 'player', video: v })} />
+          <ResultsPage
+            onBack={back}
+            goHome={() => setStack([{ kind: 'home' }])}
+            open={(v) => push({ kind: 'player', video: v })}
+            openPlace={(path) => replace({ kind: 'place', path })}
+          />
         )}
         {current.kind === 'report' && <Report keys={keys} onBack={back} />}
         {current.kind === 'profiles' && <ProfilePicker onDone={back} onManage={() => replace({ kind: 'settings' })} />}
         {current.kind === 'remote' && (
           <RemoteScreen
             onBack={back}
-            openDiagnose={() => push({ kind: 'settings' })}
-            openReport={() => push({ kind: 'report' })}
           />
         )}
         {current.kind === 'settings' && (

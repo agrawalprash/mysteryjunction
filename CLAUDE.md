@@ -9,8 +9,10 @@ for variety-first YouTube, built with Capacitor 8 + React 19 + Vite + TypeScript
   Each change: commit → push to the session branch → CI (`.github/workflows/android.yml`) builds a signed APK and
   publishes a GitHub release → PR → merge once CI is green. Merges to `master` don't build.
 - They follow along on a phone. Keep replies short and plain; say what changed and what wasn't tested on a real device.
-- Design: clean and minimal. Remove duplicate entry points instead of adding more. Nothing hardcoded to one interest
-  (e.g. "Minecraft" is only ever example data).
+- Design: clean and minimal. One UI element per function: if two things do the same job, keep one and remove the other.
+  Nothing hardcoded to one interest (e.g. "Minecraft" is only ever example data).
+- Ask is the single way in for anything said or typed (phone remote voice, Explore's bar): Claude routes it to a place on
+  the map (found or created), a search, or a change.
 - The app UI is always English (the TV's system language is German).
 
 ## Build and test

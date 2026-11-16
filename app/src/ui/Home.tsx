@@ -145,9 +145,11 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
               <Avatar id={currentProfile().id} name={currentProfile().name} />
             </button>
           )}
-          <button className="ask-btn" onClick={() => go({ kind: 'explore' })}>
-            ✦ Explore
-          </button>
+          {!simple && (
+            <button className="ask-btn" onClick={() => go({ kind: 'explore' })}>
+              ✦ Explore
+            </button>
+          )}
           <button
             className="icon-btn"
             aria-label="Settings"
@@ -245,7 +247,7 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
             <div className="the-end-mark">✦</div>
             <h3>That’s this set</h3>
             <p className="muted">
-              Wander learns from what you watch, so there’s nothing to rate. Want something else? Explore, or get a new set (↻, or pull down at the
+              Wander learns from what you watch, so there’s nothing to rate. Want something else? Explore (top right), or get a new set (↻, or pull down at the
               top). New sets come straight from your pool.
             </p>
             <div className="end-actions">
@@ -256,9 +258,7 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
               ) : (
                 <p className="muted small">Your pool is thin and YouTube’s daily limit is used up. More tomorrow.</p>
               )}
-              <button className="btn btn-ghost" disabled={busy} onClick={() => go({ kind: 'explore' })}>
-                ✦ Explore
-              </button>
+
             </div>
           </section>
         </main>
