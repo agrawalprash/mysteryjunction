@@ -54,17 +54,17 @@ test('moving before the hold delay is a swipe, not voice', () => {
   assert.deepEqual(log, ['ArrowDown']);
 });
 
-test('while holding, sliding up asks Claude and sliding down forces a search', () => {
+test('while holding, sliding down asks Claude; sliding up or staying put is a search', () => {
   const a = setup();
   a.g.down(100, 300);
   a.fireTimer();
-  a.g.move(100, 200);
+  a.g.move(100, 400);
   a.g.up();
   assert.deepEqual(a.log, ['holdStart', 'holdEnd:ask']);
   const b = setup();
   b.g.down(100, 300);
   b.fireTimer();
-  b.g.move(100, 400);
+  b.g.move(100, 200);
   b.g.up();
-  assert.deepEqual(b.log, ['holdStart', 'holdEnd:search']);
+  assert.deepEqual(b.log, ['holdStart', 'holdEnd:auto']);
 });

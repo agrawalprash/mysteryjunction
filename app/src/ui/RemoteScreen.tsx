@@ -212,11 +212,11 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
       >
         {voice ? (
           <div className="touchpad-voice">
-            <div className={`zone zone-top${voice.mode === 'ask' ? ' zone-on' : ''}`}>
-              {voice.mode === 'ask' ? '✦ Ask Claude' : '↑ Slide up here to ask Claude'}
-            </div>
             <div className="touchpad-mic">{voice.mode === 'ask' ? '✦' : '🔎'}</div>
             <div>{voice.mode === 'ask' ? 'Release to ask Claude' : 'Release to search'}</div>
+            <div className={`zone zone-bottom${voice.mode === 'ask' ? ' zone-on' : ''}`}>
+              {voice.mode === 'ask' ? '✦ Ask Claude' : '↓ Slide down here to ask Claude'}
+            </div>
           </div>
         ) : (
           <div className="touchpad-hint">
@@ -224,7 +224,7 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
             <div>
               <b>Hold and speak</b> to search
             </div>
-            <div className="muted small">While holding, slide ↑ to ask Claude instead (“something calm tonight”, “add a row for jazz”)</div>
+            <div className="muted small">While holding, slide ↓ to ask Claude instead (“something calm tonight”, “add a row for jazz”)</div>
             <div className="muted small">Swipe to move · Tap for OK</div>
           </div>
         )}
@@ -246,7 +246,7 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
           {np?.playing ? '⏸' : '⏯'}
         </button>
       </div>
-      <p className="muted small remote-tip">Hold to search · hold and slide ↑ to ask Claude · ✦ Ideas for suggestions</p>
+      <p className="muted small remote-tip">Hold to search · hold and slide ↓ to ask Claude · ✦ Ideas for suggestions</p>
 
       <button className="more-toggle" onClick={() => setMore((m) => !m)}>
         {more ? '▴ Less' : '▾ More'}

@@ -5,7 +5,7 @@
 
 export type Dir = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight';
 
-/** While holding: where the finger has slid. Up = ask Claude, down = search, middle = let Wander decide. */
+/** While holding: where the finger has slid. Down = ask Claude; anywhere else = search. */
 export type HoldZone = 'auto' | 'ask' | 'search';
 
 export interface GestureHandlers {
@@ -62,7 +62,7 @@ export function createGestures(h: GestureHandlers, timers = defaultTimers) {
       const dy = y - startY;
       if (holding) {
         // Sliding while talking picks where it goes.
-        const z: HoldZone = dy < -ZONE_PX ? 'ask' : dy > ZONE_PX ? 'search' : 'auto';
+        const z: HoldZone = dy > ZONE_PX ? 'ask' : 'auto';
         if (z !== zone) {
           zone = z;
           h.holdZone?.(z);
