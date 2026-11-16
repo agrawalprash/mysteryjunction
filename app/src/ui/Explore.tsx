@@ -14,7 +14,7 @@ import {
   type PlaceMark,
 } from '../lib/wander.ts';
 import { claudeAuth } from '../lib/keys.ts';
-import { AREAS, findPlace, levelOf, pathId, savedLevel, type MapLevel, type MapPlace } from '../lib/map.ts';
+import { findPlace, levelOf, pathId, savedLevel, topAreas, type MapLevel, type MapPlace } from '../lib/map.ts';
 import type { Suggestion } from '../lib/claude.ts';
 import { listen } from '../lib/voice.ts';
 import { VideoCard } from './VideoCard.tsx';
@@ -194,6 +194,18 @@ export function ExploreHub({
     if (keys.anthropic) getSuggestions(keys).then(setSuggestions).catch(() => undefined);
   }, [keys]);
   const recent = recentPlaces(4);
+  // The top level is drawn by Claude the first time (per profile kind), then saved.
+  const [areas, setAreas] = useState<MapPlace[]>(topAreas());
+  const [drawing, setDrawing] = useState(false);
+  useEffect(() => {
+    const auth = claudeAuth(keys);
+    if (savedLevel([]) || !auth) return;
+    setDrawing(true);
+    levelOf(auth, [])
+      .then((l) => setAreas(l.children))
+      .catch(() => undefined)
+      .finally(() => setDrawing(false));
+  }, [keys]);
 
   return (
     <div className="screen explore">
@@ -217,8 +229,13 @@ export function ExploreHub({
 
       <section className="explore-section">
         <h2>The map</h2>
+        {drawing && (
+          <div className="ask-progress">
+            <div className="spinner small-spinner" /> Claude is drawing the map…
+          </div>
+        )}
         <div className="area-grid">
-          {AREAS.map((a) => {
+          {!drawing && areas.map((a) => {
             const n = placesVisitedIn(a.path);
             const mark = placeMark(a.path);
             return (
