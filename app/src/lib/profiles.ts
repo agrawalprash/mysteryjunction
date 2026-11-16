@@ -10,11 +10,15 @@ export interface ProfileOptions {
   playful: boolean;
   /** YouTube's strict SafeSearch for everything this profile searches. */
   strictSafeSearch: boolean;
-  /** Read the focused card's "why this" line aloud on the TV. (Coming with the read-aloud step.) */
+  /** Read the focused card's "why this" line aloud on the TV. */
   readAloud: boolean;
-  /** Daily time budget with a visible timer, wind-down and goodbye. (Coming with the timer step.) */
+  /** Daily time budget with a visible timer, last-video warning and goodbye. */
   timer: boolean;
   dailyMinutes: number;
+  /** Only show videos Claude judged suitable for young children. */
+  contentCheck: boolean;
+  /** A simple home: six big picks instead of rows. */
+  simpleHome: boolean;
 }
 
 export interface WanderProfile {
@@ -25,8 +29,8 @@ export interface WanderProfile {
 }
 
 export const PRESETS: Record<Preset, ProfileOptions> = {
-  adult: { playful: false, strictSafeSearch: false, readAloud: false, timer: false, dailyMinutes: 90 },
-  kid: { playful: true, strictSafeSearch: true, readAloud: true, timer: true, dailyMinutes: 45 },
+  adult: { playful: false, strictSafeSearch: false, readAloud: false, timer: false, dailyMinutes: 90, contentCheck: false, simpleHome: false },
+  kid: { playful: true, strictSafeSearch: true, readAloud: true, timer: true, dailyMinutes: 45, contentCheck: true, simpleHome: true },
 };
 
 export const PRESET_LABELS: Record<Preset, string> = { adult: 'Grown-up', kid: 'Kid' };
@@ -93,4 +97,25 @@ export function deleteProfile(id: string) {
   saveProfiles(listProfiles().filter((p) => p.id !== id));
   remove(stateKey(id));
   if (load<string>('active-profile', MAIN_ID) === id) save('active-profile', MAIN_ID);
+}
+
+// ---------------------------------------------------------------- parent PIN
+// Kept on the device. It keeps a child from leaving their profile or changing settings,
+// not a determined adult: it isn't a security boundary.
+
+export function parentPin(): string {
+  return load<string>('parent-pin', '');
+}
+
+export function setParentPin(pin: string) {
+  if (pin) save('parent-pin', pin);
+  else remove('parent-pin');
+}
+
+/** Whether moving from the active profile to `to` (or into Settings, when `to` is omitted) needs the PIN. */
+export function needsPin(to?: WanderProfile): boolean {
+  if (!parentPin()) return false;
+  const from = activeProfile();
+  if (to) return to.preset !== 'kid' && to.id !== from.id;
+  return from.preset === 'kid';
 }

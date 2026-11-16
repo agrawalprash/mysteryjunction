@@ -251,6 +251,9 @@ const Tag = z.object({
   pace: z.enum(['calm', 'moderate', 'energetic']),
   depth: z.enum(['light', 'medium', 'deep']),
   clickbait: z.boolean().describe('True if the title/description look sensational, misleading or low-effort.'),
+  kid_safe: z
+    .boolean()
+    .describe('True only if this is clearly suitable for a young child (about 5–8) to watch alone: no violence, scares, crude or sexual content, bad language, pranks/challenges, shock, toy-ad or unboxing content, or kid-influencer channels. When unsure, false.'),
   concepts: z
     .array(z.string())
     .describe('3–8 short lowercase concept tags (subject areas, places, crafts, eras, moods, e.g. "maritime history", "west africa", "slow craft"). Reuse tags from the given vocabulary when they fit.'),
@@ -301,6 +304,7 @@ export async function describeVideos(auth: ClaudeAuth, videos: Candidate[], voca
               pace: t.pace,
               depth: t.depth,
               clickbait: t.clickbait,
+              kidSafe: t.kid_safe,
               concepts: [...new Set(t.concepts.map((c) => c.trim().toLowerCase()).filter(Boolean))].slice(0, 8),
             };
         }
@@ -593,4 +597,25 @@ export async function explainPicks(auth: ClaudeAuth, viewer: WhyInput, videos: C
   const out: Record<string, string> = {};
   for (const l of res.parsed_output.lines) if (videos[l.i] && l.why.trim()) out[videos[l.i].id] = l.why.trim();
   return out;
+}
+
+// ---------------------------------------------------------------- goodbye idea (kid timer)
+
+const Goodbye = z.object({
+  idea: z.string().describe('One thing to do away from the screen now, 1–2 short sentences a 6-year-old understands.'),
+});
+
+/** Something to do after TV time ends, sparked by what the child watched today. */
+export async function goodbyeIdea(auth: ClaudeAuth, watchedToday: string[]): Promise<string> {
+  const res = await client(auth).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 2000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(Goodbye) },
+    system: forProfile(
+      'TV time just ended for today. Suggest one simple, safe thing the child can do now away from the screen that carries on from something they watched: build it, draw it, act it out, find it outside, or tell someone about it. Use things found in any home (paper, boxes, blocks, crayons). Warm and inviting, never preachy.',
+    ),
+    messages: [{ role: 'user', content: `Watched today: ${watchedToday.join(' | ') || 'nothing in particular'}` }],
+  });
+  return res.parsed_output?.idea?.trim() ?? '';
 }

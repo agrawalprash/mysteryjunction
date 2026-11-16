@@ -8,7 +8,10 @@ import { useTv, type Screen } from './App.tsx';
 import { focusFirst } from '../lib/spatialNav.ts';
 import { onVoiceKey } from '../lib/voice.ts';
 import { Avatar } from './Profiles.tsx';
-import { listProfiles } from '../lib/profiles.ts';
+import { listProfiles, needsPin } from '../lib/profiles.ts';
+import { requestPin } from '../lib/pinGate.ts';
+import { KidHome, pickSix } from './KidHome.tsx';
+import { TimeChip } from './TimeChip.tsx';
 
 export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Candidate) => void; go: (s: Screen) => void; visible: boolean }) {
   const [feed, setFeed] = useState<DailyFeed | null>(todaysFeed());
@@ -17,6 +20,9 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<Set<string>>(new Set(getState().opened));
   const tv = useTv();
+  const simple = currentProfile().options.simpleHome;
+  // Simple home: which six of the set are showing ("Show me different ones" moves on).
+  const [round, setRound] = useState(0);
 
   // A new set can arrive from elsewhere (a request from your phone, or an Ask that finished after closing).
   useEffect(
@@ -38,14 +44,14 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
     setFeed(f);
     setOpened(new Set(getState().opened));
     window.scrollTo({ top: 0 });
-    if (tv) window.setTimeout(() => focusFirst('.row .card'), 80);
+    if (tv) window.setTimeout(() => focusFirst('.kid-grid .card, .row .card'), 80);
   };
 
   // On TV, once the feed arrives, start on the first video instead of the header.
   useEffect(() => {
     if (!tv || !feed || !visible) return;
     const a = document.activeElement;
-    if (!a || a === document.body || a.closest('.topbar')) focusFirst('.row .card');
+    if (!a || a === document.body || a.closest('.topbar')) focusFirst('.kid-grid .card, .row .card');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tv, feed]);
 
@@ -133,6 +139,7 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
           <span className="logo-mark">✦</span> Wander
         </div>
         <div className="topbar-actions">
+          <TimeChip />
           {listProfiles().length > 1 && (
             <button className="icon-btn profile-btn" aria-label={`Profile: ${currentProfile().name}. Switch profile`} onClick={() => go({ kind: 'profiles' })}>
               <Avatar id={currentProfile().id} name={currentProfile().name} />
@@ -141,7 +148,14 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
           <button className="ask-btn" onClick={() => go({ kind: 'explore' })}>
             ✦ Explore
           </button>
-          <button className="icon-btn" aria-label="Settings" onClick={() => go({ kind: 'settings' })}>
+          <button
+            className="icon-btn"
+            aria-label="Settings"
+            onClick={async () => {
+              if (needsPin() && !(await requestPin('Open settings.'))) return;
+              go({ kind: 'settings' });
+            }}
+          >
             <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.3.61.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.25.42.49.42h3.84c.24 0 .45-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2" /></svg>
           </button>
         </div>
@@ -172,7 +186,34 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
         </div>
       )}
 
-      {feed && (
+      {feed && simple && (
+        <>
+          <div className="kid-greeting">
+            <h1>Hi, {currentProfile().name}!</h1>
+          </div>
+          <KidHome feed={feed} round={round} open={open} opened={opened} />
+          <div className="kid-actions">
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={() => {
+                if (pickSix(feed, round + 1).length >= 6) setRound(round + 1);
+                else {
+                  setRound(0);
+                  void doNewSet();
+                }
+              }}
+            >
+              Show me different ones
+            </button>
+            <button className="btn btn-ghost" onClick={() => go({ kind: 'explore' })}>
+              Explore everything
+            </button>
+          </div>
+        </>
+      )}
+
+      {feed && !simple && (
         <main>
           {feed.plannerNote && <p className="planner-note">{feed.plannerNote}</p>}
           {feed.rows.length === 0 && <p className="muted planner-note">Nothing matched this time. Try a new set or ask for something.</p>}

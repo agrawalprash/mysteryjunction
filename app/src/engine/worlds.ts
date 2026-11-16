@@ -79,3 +79,21 @@ export function worldVideos(videos: Candidate[], concept: string, score: (c: Can
     .slice(0, limit)
     .map((x) => x.v);
 }
+
+/** Worlds that share videos with this one, most shared first: where to hop next. */
+export function nearbyWorlds(videos: Candidate[], concept: string, limit = 8): { concept: string; shared: number }[] {
+  const want = normConcept(concept);
+  const total = new Map<string, number>();
+  for (const v of videos) for (const c of new Set(conceptsOf(v))) total.set(c, (total.get(c) ?? 0) + 1);
+  const shared = new Map<string, number>();
+  for (const v of videos) {
+    const cs = conceptsOf(v);
+    if (!cs.includes(want)) continue;
+    for (const c of cs) if (c !== want) shared.set(c, (shared.get(c) ?? 0) + 1);
+  }
+  return [...shared.entries()]
+    .filter(([c]) => (total.get(c) ?? 0) >= MIN_VIDEOS)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([c, n]) => ({ concept: c, shared: n }));
+}

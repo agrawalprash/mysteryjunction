@@ -6,6 +6,7 @@ import { currentProfile, guideProfile, profileReport, type ProfileReport } from 
 import { suggestGuidance, type GuidanceIdea } from '../lib/claude.ts';
 import { Avatar } from './Profiles.tsx';
 import { HoldToTalk } from './HoldToTalk.tsx';
+import { addMinutes } from '../lib/screenTime.ts';
 
 interface ReportReply {
   profiles: WanderProfile[];
@@ -72,6 +73,19 @@ export function Report({ keys, onBack }: { keys: ApiKeys; onBack: () => void }) 
     setDraft('');
     setIdeas((xs) => xs?.filter((x) => x.instruction !== t) ?? null);
     void load(profileId, { addRule: t });
+  };
+
+  const extend = async (minutes: number) => {
+    if (!profileId) return;
+    try {
+      if (source === 'tv') setData((await sendToTv({ type: 'extend', profileId, minutes })) as ReportReply);
+      else {
+        addMinutes(profileId, minutes);
+        void load(profileId);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const getIdeas = async () => {
@@ -148,6 +162,17 @@ export function Report({ keys, onBack }: { keys: ApiKeys; onBack: () => void }) 
                 </p>
               </div>
             </div>
+            {r.time && (
+              <div className="report-time">
+                <span>
+                  TV today: <strong>{r.time.usedMin}</strong> of {r.time.budgetMin} min
+                  {r.time.leftSec <= 0 ? ' · time’s up' : ` · ${Math.ceil(r.time.leftSec / 60)} left`}
+                </span>
+                <button className="btn btn-ghost" onClick={() => void extend(15)}>
+                  +15 min today
+                </button>
+              </div>
+            )}
           </section>
 
           <section className="panel">

@@ -21,7 +21,7 @@ import {
 } from '../engine/profile.ts';
 import { assembleFeed, assembleSurprise, eligible, makeScorer, relatedFromPool, type FeedContext } from '../engine/feed.ts';
 import { addConceptSignal, conceptAffinity, conceptsOf, features, initialWeights, topConcepts, update, FEATURES, type Weights } from '../engine/learn.ts';
-import { computeWorlds, worldVideos, type Worlds } from '../engine/worlds.ts';
+import { computeWorlds, nearbyWorlds, worldVideos, type World } from '../engine/worlds.ts';
 import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } from '../engine/pool.ts';
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
@@ -29,6 +29,7 @@ import { AUTO_BUDGET, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetai
 import { askWander, describeVideos, explainPicks, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
 import { getSettings } from './settings.ts';
+import { timeStatus, type TimeStatus } from './screenTime.ts';
 import { activeProfile, deleteProfile, listProfiles, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -158,6 +159,7 @@ function ctx(): FeedContext {
     watchedIds: new Set(state.history.map((h) => h.videoId)),
     mutedChannels: new Set(state.muted),
     history: state.history,
+    kidCheck: activeProfile().options.contentCheck,
   };
 }
 
@@ -238,14 +240,17 @@ async function runDirections(directions: Direction[], keys: ApiKeys, onProgress:
 /** Ask Claude to describe the videos that could actually be shown and aren't described yet. */
 async function describe(found: Candidate[], auth: ClaudeAuth | null, onProgress: (msg: string) => void, limit = MAX_DESCRIBE) {
   if (!auth) return;
-  const c = ctx();
-  // Reuse descriptions we already have (only complete ones, with concept tags).
-  const known = new Map(state.pool.filter((p) => p.facets?.concepts).map((p) => [p.id, p.facets!]));
-  for (const v of found) if (!v.facets?.concepts && known.has(v.id)) v.facets = known.get(v.id);
+  // Undescribed videos can't pass the kid check yet, so pick what to describe without it.
+  const kid = !!ctx().kidCheck;
+  const c = { ...ctx(), kidCheck: false };
+  const complete = (f?: Candidate['facets']) => !!f?.concepts && (!kid || f.kidSafe !== undefined);
+  // Reuse descriptions we already have (only complete ones).
+  const known = new Map(state.pool.filter((p) => complete(p.facets)).map((p) => [p.id, p.facets!]));
+  for (const v of found) if (!complete(v.facets) && known.has(v.id)) v.facets = known.get(v.id);
   // Likeliest picks first, so a limited run covers what will actually be shown.
   const score = makeScorer({ ...c, rng: () => 0.5 });
   const todo = found
-    .filter((v) => !v.facets?.concepts && eligible(v, c, v.tier === 'shorts'))
+    .filter((v) => !complete(v.facets) && eligible(v, c, v.tier === 'shorts'))
     .sort((a, b) => score(b) - score(a))
     .slice(0, limit);
   if (todo.length === 0) return;
@@ -399,7 +404,8 @@ function afterShowing(keys: ApiKeys, found: Candidate[]) {
   void (async () => {
     // Describe anything still undescribed (just fetched, or left from before).
     // (Videos described before concept tags existed get tagged too, a batch at a time.)
-    const undescribed = [...found, ...state.pool].filter((c) => !c.facets?.concepts).slice(0, MAX_DESCRIBE);
+    const kid = activeProfile().options.contentCheck;
+    const undescribed = [...found, ...state.pool].filter((c) => !c.facets?.concepts || (kid && c.facets.kidSafe === undefined)).slice(0, MAX_DESCRIBE);
     if (auth && undescribed.length) {
       await describe(undescribed, auth, () => undefined).catch(() => undefined);
       if (gen !== generation) return;
@@ -755,7 +761,13 @@ export async function search(q: string, keys: ApiKeys): Promise<Candidate[]> {
   persist();
   const ids = await searchIds(query, keys.youtube, { maxResults: 20, language: getSettings().language });
   const videos = await videoDetails(ids, keys.youtube);
-  const results = videos.map((v) => ({ ...v, topic: query, tier: 'search' as const, because: `You searched “${query}”`, query, fetchedAt: now }));
+  let results: Candidate[] = videos.map((v) => ({ ...v, topic: query, tier: 'search' as const, because: `You searched “${query}”`, query, fetchedAt: now }));
+  if (activeProfile().options.contentCheck) {
+    // Kid profiles: Claude checks search results before any are shown.
+    const auth = claudeAuth(keys);
+    if (auth) await describe(results, auth, () => undefined);
+    results = results.filter((r) => r.facets?.kidSafe === true);
+  }
   mergePool(results);
   persist();
   return results;
@@ -841,6 +853,8 @@ export interface ProfileReport {
   minutesThisWeek: number;
   videosThisWeek: number;
   pool: { total: number; fresh: number; described: number } | null;
+  /** Today's TV time, for profiles with the timer on. */
+  time: TimeStatus | null;
 }
 
 /** A profile's saved data: the live state for the active profile, a read-only copy for others. */
@@ -867,6 +881,7 @@ export function profileReport(id = activeProfile().id): ProfileReport {
     minutesThisWeek: Math.round(week.reduce((a, w) => a + w.watchedSec, 0) / 60),
     videosThisWeek: week.length,
     pool: h ? { total: h.total, fresh: h.freshMain, described: h.described } : null,
+    time: timeStatus(id).on ? timeStatus(id) : null,
   };
 }
 
@@ -886,18 +901,47 @@ export function guideProfile(id: string, change: { addRule?: string; forget?: { 
 
 // ---------------------------------------------------------------- explore
 
-/** Worlds to explore, from what's in the pool and what this profile likes. Instant, no API calls. */
-export function exploreWorlds(): Worlds {
-  const c = ctx();
-  const videos = state.pool.filter((v) => v.tier !== 'shorts' && eligible(v, c));
-  return computeWorlds(videos, state.conceptProfile, c.now);
+export interface WorldTile extends World {
+  /** The thumbnail of its best video. */
+  thumb: string;
 }
 
-/** The best videos waiting in one world. */
-export function worldItems(concept: string): Candidate[] {
+function exploreVideos(): Candidate[] {
   const c = ctx();
-  const videos = state.pool.filter((v) => v.tier !== 'shorts' && eligible(v, c));
-  return worldVideos(videos, concept, makeScorer(c));
+  return state.pool.filter((v) => v.tier !== 'shorts' && eligible(v, c));
+}
+
+/** Worlds to explore, from what's in the pool and what this profile likes. Instant, no API calls. */
+export function exploreWorlds(): { yours: WorldTile[]; edges: WorldTile[] } {
+  const videos = exploreVideos();
+  const w = computeWorlds(videos, state.conceptProfile, Date.now());
+  const score = makeScorer({ ...ctx(), rng: () => 0.5 });
+  const tile = (x: World): WorldTile => ({ ...x, thumb: worldVideos(videos, x.concept, score, 1)[0]?.thumb ?? '' });
+  return { yours: w.yours.map(tile), edges: w.edges.map(tile) };
+}
+
+export interface WorldShelves {
+  best: Candidate[];
+  short: Candidate[];
+  deeper: Candidate[];
+  nearby: string[];
+  count: number;
+}
+
+/** One world's page: its best videos, short ones, deeper ones, and the worlds next to it. */
+export function worldShelves(concept: string): WorldShelves {
+  const videos = exploreVideos();
+  const all = worldVideos(videos, concept, makeScorer(ctx()), 200);
+  const used = new Set<string>();
+  const take = (list: Candidate[], n: number) => {
+    const out = list.filter((v) => !used.has(v.id)).slice(0, n);
+    out.forEach((v) => used.add(v.id));
+    return out;
+  };
+  const best = take(all, 10);
+  const short = take(all.filter((v) => v.durationSec <= 8 * 60), 10);
+  const deeper = take(all.filter((v) => v.durationSec >= 20 * 60 || v.facets?.depth === 'deep'), 10);
+  return { best, short, deeper, nearby: nearbyWorlds(videos, concept).map((w) => w.concept), count: all.length };
 }
 
 export interface ExploreResult {

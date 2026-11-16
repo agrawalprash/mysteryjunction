@@ -33,6 +33,8 @@ export interface Facets {
   clickbait: boolean;
   /** 3–8 short concept tags from Claude ("maritime history", "slow craft", "west africa"). */
   concepts?: string[];
+  /** Claude's judgement: clearly suitable for a young child (about 5–8). */
+  kidSafe?: boolean;
 }
 
 /** A video plus where it came from, so we can learn from what happens to it. */
