@@ -14,7 +14,7 @@ import {
   type PlaceMark,
 } from '../lib/wander.ts';
 import { claudeAuth } from '../lib/keys.ts';
-import { findPlace, levelOf, pathId, savedLevel, topAreas, type MapLevel, type MapPlace } from '../lib/map.ts';
+import { drawAhead, findPlace, levelOf, pathId, savedLevel, topAreas, type MapLevel, type MapPlace } from '../lib/map.ts';
 import type { Suggestion } from '../lib/claude.ts';
 import { listen } from '../lib/voice.ts';
 import { VideoCard } from './VideoCard.tsx';
@@ -199,10 +199,18 @@ export function ExploreHub({
   const [drawing, setDrawing] = useState(false);
   useEffect(() => {
     const auth = claudeAuth(keys);
-    if (savedLevel([]) || !auth) return;
+    if (!auth) return;
+    // Draw what's inside each area in the background, so opening one is instant.
+    if (savedLevel([])) {
+      drawAhead(auth, topAreas().map((a) => a.path));
+      return;
+    }
     setDrawing(true);
     levelOf(auth, [])
-      .then((l) => setAreas(l.children))
+      .then((l) => {
+        setAreas(l.children);
+        drawAhead(auth, l.children.map((c) => c.path));
+      })
       .catch(() => undefined)
       .finally(() => setDrawing(false));
   }, [keys]);
@@ -312,6 +320,12 @@ export function MapPage({
     }, 120);
     return () => clearTimeout(t);
   }, [tv, level, videos]);
+
+  // Draw one level ahead in the background, so the places on this page open instantly.
+  useEffect(() => {
+    const auth = claudeAuth(keys);
+    if (auth && level) drawAhead(auth, level.children.map((c) => c.path));
+  }, [keys, level]);
 
   const parent = path.length > 1 ? savedLevel(path.slice(0, -1)) : null;
   const siblings = (parent?.children ?? []).filter((c) => pathId(c.path) !== pathId(path)).slice(0, 4);

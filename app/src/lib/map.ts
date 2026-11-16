@@ -92,3 +92,31 @@ export function levelOf(auth: ClaudeAuth, path: string[]): Promise<MapLevel> {
   drawing.set(id, p);
   return p;
 }
+
+// ---------------------------------------------------------------- drawing ahead
+
+const queue: { auth: ClaudeAuth; path: string[] }[] = [];
+let active = 0;
+const AHEAD_AT_ONCE = 3;
+
+function pump() {
+  while (active < AHEAD_AT_ONCE && queue.length) {
+    const job = queue.shift()!;
+    if (savedLevel(job.path)) continue;
+    active += 1;
+    levelOf(job.auth, job.path)
+      .catch(() => undefined)
+      .finally(() => {
+        active -= 1;
+        pump();
+      });
+  }
+}
+
+/** Quietly draw what's inside these places, so opening one is instant. Newest requests go first. */
+export function drawAhead(auth: ClaudeAuth, paths: string[][]) {
+  const todo = paths.filter((p) => !savedLevel(p) && !queue.some((q) => pathId(q.path) === pathId(p)));
+  queue.unshift(...todo.map((path) => ({ auth, path })));
+  queue.splice(24); // forget stale requests from pages left long ago
+  pump();
+}

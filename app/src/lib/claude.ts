@@ -11,6 +11,8 @@ import { FORMATS, type Candidate, type CustomRow, type Direction, type ExitRecor
 import { activeProfile } from './profiles.ts';
 
 export const MODEL = 'claude-opus-5-5';
+/** For quick list-making where speed matters more than judgement (drawing Explore's map). */
+export const FAST_MODEL = 'claude-haiku-5-5';
 
 /** Extra instructions for a profile with the playful (kid) option on. */
 const PLAYFUL = `
@@ -646,7 +648,7 @@ export type MapLevelInfo = z.infer<typeof MapLevel>;
 export async function mapChildren(auth: ClaudeAuth, path: string[], areas: string[]): Promise<MapLevelInfo> {
   const top = path.length === 0;
   const res = await client(auth).beta.messages.parse({
-    model: MODEL,
+    model: FAST_MODEL,
     max_tokens: 6000,
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(MapLevel) },
