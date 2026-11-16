@@ -5,6 +5,7 @@ An Android app for watching YouTube with a recommendation feed built for variety
 ## How the feed works
 
 - **Three distances.** Every day's feed mixes *core* (your interests, new angles), *adjacent* (one step away) and *wildcard* (unrelated) picks, plus hidden gems (few views, high like ratio), older classics, a Watch again row and a separate Shorts section.
+- **A pool on the device.** About 1,200 candidate videos are kept on the device and topped up in the background while the app is open (after you watch, on resume, every 20 minutes), mostly from cheap channel reads Claude chooses. New sets (↻, or pull down on the phone) are ranked from the pool instantly with no API calls: Claude's concept tags give a taste match, a small on-device model learns what you finish, and Thompson sampling decides which uncertain topics to explore.
 - **Finite.** About 30 videos and 10 shorts per day, then "That's today's picks". "Surprise me" adds up to 3 small wildcard rows per day.
 - **No effort.** Learns only from behaviour: finishing a video is a strong yes, leaving within 20 seconds is a mild no, never opening something is a very weak no, searching is a hint. Optional "Less like this" and "Hide channel" buttons exist but aren't needed.
 - **Keeps moving.** Shown videos fade fast, watched videos only reappear under Watch again, binged topics rest for a few days, max one video per channel per feed. Wildcards that land graduate into interests.

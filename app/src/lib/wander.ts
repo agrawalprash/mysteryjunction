@@ -1,8 +1,10 @@
-// App state and the pipeline that makes a set of videos:
-//   plan (Claude) -> search (YouTube) -> describe (Claude) -> pick (engine) -> remember.
-// A new set is made each day and whenever you ask for one. The next set is
-// prepared in the background so that asking for it is usually instant.
-// Plus a weekly taste profile, and things you tell Wander (rows, interests, rules).
+// App state and the pipeline, built around a fixed-size pool of videos on the device:
+//   background refill:  plan (Claude) -> fetch (YouTube, mostly cheap channel reads)
+//                       -> describe + concept-tag (Claude) -> add to pool, trim to size
+//   new set (instant):  rank the pool on the device (concept taste, learned model,
+//                       exploration) -> pick with variety rules -> show
+// Refills happen while the app is open: after you watch things, when you come back,
+// and every 20 minutes. Plus a weekly taste profile, and things you tell Wander.
 
 import type { Candidate, CustomRow, DailyFeed, Direction, ExitRecord, TasteProfile, WatchRecord } from '../engine/types.ts';
 import {
@@ -18,10 +20,12 @@ import {
   type Profile,
 } from '../engine/profile.ts';
 import { assembleFeed, assembleSurprise, eligible, makeScorer, relatedFromPool, type FeedContext } from '../engine/feed.ts';
+import { addConceptSignal, conceptAffinity, conceptsOf, features, initialWeights, topConcepts, update, FEATURES, type Weights } from '../engine/learn.ts';
+import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } from '../engine/pool.ts';
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
 import { AUTO_BUDGET, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
-import { askWander, describeVideos, planDay, planSurprise, writeTasteProfile, type ClaudeAuth, type PlannerInput } from './claude.ts';
+import { askWander, describeVideos, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
 import { getSettings } from './settings.ts';
 
@@ -31,14 +35,6 @@ export const SURPRISES_PER_DAY = 3;
 const MAX_DESCRIBE = 200;
 /** When you're waiting, describe only the likeliest picks first; the rest follow in the background. */
 const QUICK_DESCRIBE = 60;
-
-/** A set that has been planned, searched and described but not shown yet. */
-interface Prepared {
-  directions: Direction[];
-  note: string;
-  candidateIds: string[];
-  createdAt: number;
-}
 
 interface State {
   profile: Profile;
@@ -59,9 +55,16 @@ interface State {
   rules: string[];
   customRows: CustomRow[];
   asks: { text: string; reply: string; at: number }[];
-  prepared: Prepared | null;
-  /** YouTube quota units the last few sets actually cost. */
+  /** YouTube quota units the last few fetches actually cost. */
   setCosts: number[];
+  /** Taste over Claude's concept tags. */
+  conceptProfile: Profile;
+  /** The on-device ranking model. */
+  weights: Weights;
+  /** Claude's suggestions for the Ask panel. */
+  suggestions: { at: number; items: Suggestion[] } | null;
+  lastRefill: number;
+  watchesSinceRefill: number;
 }
 
 function fresh(): State {
@@ -83,13 +86,24 @@ function fresh(): State {
     rules: [],
     customRows: [],
     asks: [],
-    prepared: null,
     setCosts: [],
+    conceptProfile: {},
+    weights: initialWeights(),
+    suggestions: null,
+    lastRefill: 0,
+    watchesSinceRefill: 0,
   };
 }
 
 // Older saves may lack newer fields; fill them in.
 let state: State = { ...fresh(), ...load<Partial<State>>('state', {}) };
+if (!Array.isArray(state.weights) || state.weights.length !== FEATURES.length) state.weights = initialWeights();
+
+/** One online-learning step for the ranking model. */
+function learn(c: Candidate, y: 0 | 1, weight: number) {
+  const affinity = conceptAffinity(state.conceptProfile, conceptsOf(c), Date.now());
+  state.weights = update(state.weights, features(c, affinity), y, weight);
+}
 
 // Lets screens know when the set on screen changes (e.g. after a request from the phone).
 const listeners = new Set<() => void>();
@@ -107,10 +121,10 @@ function persist() {
   state.history = state.history.slice(-500);
   state.exits = state.exits.slice(-200);
   state.dismissed = state.dismissed.slice(-50);
-  state.pool = state.pool.filter((c) => now - c.fetchedAt < 6 * DAY).slice(-800);
+  // The pool is trimmed by value when videos are added; this is only a safety cap.
+  if (state.pool.length > POOL_SIZE + 400) state.pool = state.pool.slice(-(POOL_SIZE + 400));
   state.searches = state.searches.slice(-30);
   state.asks = state.asks.slice(-20);
-  if (state.prepared && now - state.prepared.createdAt > 2 * DAY) state.prepared = null;
   state.recentTopics = state.recentTopics.filter((t) => now - t.at < 7 * DAY).slice(-120);
   const shownIds = Object.keys(state.shownCounts);
   if (shownIds.length > 4000) {
@@ -127,6 +141,8 @@ function ctx(): FeedContext {
   return {
     profile: state.profile,
     facetProfile: state.facetProfile,
+    conceptProfile: state.conceptProfile,
+    weights: state.weights,
     now: Date.now(),
     shownCounts: state.shownCounts,
     watchedIds: new Set(state.history.map((h) => h.videoId)),
@@ -135,7 +151,7 @@ function ctx(): FeedContext {
   };
 }
 
-function plannerInput(focus = ''): PlannerInput {
+function plannerInput(focus = '', refill = false): PlannerInput {
   const now = Date.now();
   return {
     interests: coreInterests(state.profile, now).map((t) => ({ name: t.name, score: t.score })),
@@ -152,6 +168,7 @@ function plannerInput(focus = ''): PlannerInput {
     rules: state.rules,
     customRows: state.customRows,
     focus,
+    refill,
     language: getSettings().language,
   };
 }
@@ -212,24 +229,37 @@ async function runDirections(directions: Direction[], keys: ApiKeys, onProgress:
 async function describe(found: Candidate[], auth: ClaudeAuth | null, onProgress: (msg: string) => void, limit = MAX_DESCRIBE) {
   if (!auth) return;
   const c = ctx();
-  const known = new Map(state.pool.filter((p) => p.facets).map((p) => [p.id, p.facets!]));
-  for (const v of found) if (!v.facets && known.has(v.id)) v.facets = known.get(v.id);
+  // Reuse descriptions we already have (only complete ones, with concept tags).
+  const known = new Map(state.pool.filter((p) => p.facets?.concepts).map((p) => [p.id, p.facets!]));
+  for (const v of found) if (!v.facets?.concepts && known.has(v.id)) v.facets = known.get(v.id);
   // Likeliest picks first, so a limited run covers what will actually be shown.
   const score = makeScorer({ ...c, rng: () => 0.5 });
   const todo = found
-    .filter((v) => !v.facets && eligible(v, c, v.tier === 'shorts'))
+    .filter((v) => !v.facets?.concepts && eligible(v, c, v.tier === 'shorts'))
     .sort((a, b) => score(b) - score(a))
     .slice(0, limit);
   if (todo.length === 0) return;
   onProgress(`Claude is looking at ${todo.length} videos…`);
-  const facets = await describeVideos(auth, todo);
+  const facets = await describeVideos(auth, todo, conceptVocabulary());
   for (const v of found) if (facets[v.id]) v.facets = facets[v.id];
+}
+
+/** Concepts already in use (your strongest ones, then the most common in the pool), so tags stay consistent. */
+function conceptVocabulary(): string[] {
+  const counts = new Map<string, number>();
+  for (const c of state.pool) for (const k of conceptsOf(c)) counts.set(k, (counts.get(k) ?? 0) + 1);
+  const common = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  return [...new Set([...topConcepts(state.conceptProfile, Date.now(), 60), ...common])].slice(0, 150);
 }
 
 function mergePool(incoming: Candidate[]) {
   const byId = new Map(state.pool.map((c) => [c.id, c]));
-  for (const c of incoming) byId.set(c.id, { ...c, facets: c.facets ?? byId.get(c.id)?.facets });
-  state.pool = [...byId.values()];
+  for (const c of incoming) {
+    const facets = c.facets ?? byId.get(c.id)?.facets;
+    // Once Claude has described a video, its description text isn't needed; keep storage small.
+    byId.set(c.id, { ...c, facets, description: facets ? undefined : c.description?.slice(0, 200) });
+  }
+  state.pool = trimPool([...byId.values()], ctx());
 }
 
 function feedIds(feed: DailyFeed | null): string[] {
@@ -246,7 +276,10 @@ function settlePreviousFeed() {
   for (const row of feed.rows) {
     if (row.id === 'again') continue;
     for (const c of row.items) {
-      if (!opened.has(c.id)) state.profile = addSignal(state.profile, c.topic, IGNORED_SIGNAL, now, c.tier, { exposed: true });
+      if (!opened.has(c.id)) {
+        state.profile = addSignal(state.profile, c.topic, IGNORED_SIGNAL, now, c.tier, { exposed: true });
+        learn(c, 0, 0.15);
+      }
     }
   }
 }
@@ -264,38 +297,37 @@ export function buildTodaysFeed(keys: ApiKeys, onProgress: (msg: string) => void
   return newSet(keys, '', onProgress);
 }
 
-/** Typical quota cost of one set, from recent sets (channel reads are much cheaper than searches). */
+/** Typical quota cost of one fetch round, from recent ones (channel reads are much cheaper than searches). */
 export function setCost(): number {
   const recent = state.setCosts.slice(-5);
   if (recent.length === 0) return SET_COST;
   return Math.max(200, Math.round(recent.reduce((a, b) => a + b, 0) / recent.length));
 }
 
-/** How many more fresh sets today's YouTube quota allows (a prepared one counts). */
+/** Rough number of new sets available now: from the pool (free) plus what today's quota could fetch. */
 export function setsLeftToday(): number {
-  return Math.max(0, Math.floor((AUTO_BUDGET - quotaUsed()) / setCost())) + (state.prepared ? 1 : 0);
+  const h = poolHealth(state.pool, ctx());
+  return Math.floor(h.freshMain / 30) + Math.max(0, Math.floor((AUTO_BUDGET - quotaUsed()) / setCost()));
+}
+
+export function poolStatus() {
+  const h = poolHealth(state.pool, ctx());
+  return { ...h, size: POOL_SIZE, lastRefill: state.lastRefill, refilling: !!refilling };
 }
 
 /**
- * Show a new set now. Without a focus, a set prepared in the background is
- * used if there is one (instant). With a focus ("music"), a fresh one is planned.
+ * Show a new set now. Normally it's made instantly from the pool. With a focus ("music")
+ * or when the pool is too thin (first run), videos are fetched first.
  */
 export function newSet(keys: ApiKeys, focus: string, onProgress: (msg: string) => void, mustBeFresh = false): Promise<DailyFeed> {
   focus = focus.trim();
   building ??= (async () => {
-    if (!focus && !mustBeFresh && preparing) {
-      onProgress('Finishing your next set…');
-      await preparing.catch(() => undefined);
-    }
-    if (!focus && !mustBeFresh && state.prepared) {
-      const p = state.prepared;
-      state.prepared = null;
-      const ids = new Set(p.candidateIds);
-      const feed = install(state.pool.filter((c) => ids.has(c.id)), p.directions, p.note, '');
+    if (!focus && !mustBeFresh && canMakeSet(poolHealth(state.pool, ctx()))) {
+      const feed = install([], [], '', '');
       afterShowing(keys, []);
       return feed;
     }
-    if (quotaUsed() + setCost() > AUTO_BUDGET) throw new Error('That’s all the new sets YouTube allows for today. More tomorrow.');
+    if (quotaUsed() + setCost() > AUTO_BUDGET) throw new Error('YouTube’s daily limit is used up and your pool is thin. More tomorrow.');
     const { found, directions, note } = await gather(keys, focus, onProgress, true);
     onProgress('Picking your set…');
     const feed = install(found, directions, note, focus);
@@ -307,14 +339,14 @@ export function newSet(keys: ApiKeys, focus: string, onProgress: (msg: string) =
   return building;
 }
 
-async function gather(keys: ApiKeys, focus: string, onProgress: (msg: string) => void, quick: boolean) {
+async function gather(keys: ApiKeys, focus: string, onProgress: (msg: string) => void, quick: boolean, refill = false) {
   const auth = claudeAuth(keys);
   let directions: Direction[];
   let note = '';
   if (auth) {
     onProgress(focus ? 'Claude is planning around your request…' : 'Asking Claude for fresh directions…');
     try {
-      const plan = await planDay(auth, plannerInput(focus));
+      const plan = await planDay(auth, plannerInput(focus, refill));
       directions = plan.directions;
       note = plan.note;
     } catch (e) {
@@ -333,11 +365,11 @@ async function gather(keys: ApiKeys, focus: string, onProgress: (msg: string) =>
   return { found, directions, note };
 }
 
-/** Turn gathered videos into the set on screen. */
-function install(found: Candidate[], directions: Direction[], note: string, focus: string): DailyFeed {
+/** Turn the pool (plus anything just fetched) into the set on screen. `extra` are focus picks. */
+function install(found: Candidate[], directions: Direction[], note: string, focus: string, extra: Candidate[] = []): DailyFeed {
   settlePreviousFeed();
   mergePool(found);
-  const feed = assembleFeed(state.pool, ctx(), localDate(), { note, focus, customRows: state.customRows });
+  const feed = assembleFeed([...extra, ...state.pool], ctx(), localDate(), { note, focus, customRows: state.customRows });
   const now = Date.now();
   for (const id of feedIds(feed)) state.shownCounts[id] = (state.shownCounts[id] ?? 0) + 1;
   for (const d of directions) state.recentTopics.push({ name: d.topic, at: now });
@@ -348,35 +380,66 @@ function install(found: Candidate[], directions: Direction[], note: string, focu
   return feed;
 }
 
-/** Background work after a set is on screen: finish describing, prepare the next set, refresh taste. */
+/** Background work after a set is on screen: finish describing, top up the pool, refresh taste. */
 function afterShowing(keys: ApiKeys, found: Candidate[]) {
   const auth = claudeAuth(keys);
   void (async () => {
-    if (auth && found.some((c) => !c.facets)) {
-      await describe(found, auth, () => undefined).catch(() => undefined);
-      mergePool(found);
+    // Describe anything still undescribed (just fetched, or left from before).
+    // (Videos described before concept tags existed get tagged too, a batch at a time.)
+    const undescribed = [...found, ...state.pool].filter((c) => !c.facets?.concepts).slice(0, MAX_DESCRIBE);
+    if (auth && undescribed.length) {
+      await describe(undescribed, auth, () => undefined).catch(() => undefined);
+      mergePool(undescribed);
       persist();
     }
-    await prepareNext(keys).catch((e) => console.warn('Preparing the next set failed', e));
+    await maybeRefill(keys).catch((e) => console.warn('Refill failed', e));
     await maybeRefreshTaste(keys).catch((e) => console.warn('Taste profile refresh failed', e));
   })();
 }
 
-let preparing: Promise<void> | null = null;
+// ---------------------------------------------------------------- background refill
 
-/** Plan, search and describe the next set ahead of time, if quota allows (keeps room for one more on demand). */
-export function prepareNext(keys: ApiKeys): Promise<void> {
-  if (state.prepared || preparing) return preparing ?? Promise.resolve();
-  if (quotaUsed() + 2 * setCost() > AUTO_BUDGET) return Promise.resolve();
-  preparing = (async () => {
-    const { found, directions, note } = await gather(keys, '', () => undefined, false);
+let refilling: Promise<void> | null = null;
+let bgKeys: ApiKeys | null = null;
+let watchTimer: ReturnType<typeof setTimeout> | undefined;
+const REFILL_MIN_GAP = 8 * 60 * 1000;
+/** Keep this much of the day's quota for searches you type. */
+const SEARCH_RESERVE = 1500;
+
+/** Top up the pool when it's thin, or when your recent watching suggests new directions. */
+export function maybeRefill(keys: ApiKeys, force = false): Promise<void> {
+  if (refilling) return refilling;
+  const now = Date.now();
+  const h = poolHealth(state.pool, ctx());
+  const drift = state.watchesSinceRefill >= 3;
+  const due = needsRefill(h) || (drift && now - state.lastRefill > 15 * 60 * 1000);
+  if (!force && (!due || now - state.lastRefill < REFILL_MIN_GAP)) return Promise.resolve();
+  if (quotaUsed() + setCost() > AUTO_BUDGET - SEARCH_RESERVE) return Promise.resolve();
+  refilling = (async () => {
+    const { found, directions } = await gather(keys, '', () => undefined, false, true);
     mergePool(found);
-    state.prepared = { directions, note, candidateIds: found.map((c) => c.id), createdAt: Date.now() };
+    for (const d of directions) state.recentTopics.push({ name: d.topic, at: Date.now() });
+    state.lastRefill = Date.now();
+    state.watchesSinceRefill = 0;
     persist();
   })().finally(() => {
-    preparing = null;
+    refilling = null;
   });
-  return preparing;
+  return refilling;
+}
+
+/** Called once the app has keys: refill shortly after start, every 20 minutes, and after watching. */
+export function startBackground(keys: ApiKeys) {
+  const first = !bgKeys;
+  bgKeys = keys;
+  if (!first) return;
+  setTimeout(() => bgKeys && void maybeRefill(bgKeys).catch(() => undefined), 15_000);
+  setInterval(() => bgKeys && void maybeRefill(bgKeys).catch(() => undefined), 20 * 60 * 1000);
+}
+
+/** When the app comes back to the foreground. */
+export function onResume() {
+  if (bgKeys) void maybeRefill(bgKeys).catch(() => undefined);
 }
 
 // ---------------------------------------------------------------- talking to Wander
@@ -442,15 +505,20 @@ export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string)
   }
   state.asks.push({ text, reply: r.reply, at: now });
   const settingsChanged = r.add_rows.length + r.remove_rows.length + r.add_rules.length + r.add_interests.length > 0;
-  // A set prepared before these changes wouldn't reflect them.
-  if (settingsChanged) state.prepared = null;
   persist();
 
   let feed: DailyFeed | null = null;
   let notice: string | undefined;
   if (r.new_set || r.focus || r.add_rows.length) {
     try {
-      feed = await newSet(keys, r.focus, onProgress, settingsChanged);
+      // A mood or wish is served from the pool when it has enough matches: no YouTube calls.
+      const fromPool = r.focus && !r.add_rows.length ? focusFromPool(r.focus, r.focus_concepts) : [];
+      if (fromPool.length >= 8) {
+        feed = install([], [], '', r.focus, fromPool);
+        afterShowing(keys, []);
+      } else {
+        feed = await newSet(keys, r.focus, onProgress, settingsChanged);
+      }
     } catch (e) {
       notice = `Saved, but no new set right now: ${e instanceof Error ? e.message : String(e)}`;
     }
@@ -458,12 +526,41 @@ export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string)
   return { reply: r.reply, feed, changes, notice };
 }
 
+/** Videos already in the pool that fit a request, as a "Because you asked" row (unseen ones first). */
+function focusFromPool(focus: string, concepts: string[]): Candidate[] {
+  const c = ctx();
+  const matches = matchPool(state.pool, c, focus, concepts, 40).filter((m) => m.tier !== 'shorts');
+  const unseen = matches.filter((m) => !(c.shownCounts[m.id] > 0));
+  const seen = matches.filter((m) => c.shownCounts[m.id] > 0);
+  return [...unseen, ...seen].map((m) => ({ ...m, tier: 'focus' as const, because: 'You asked for this' }));
+}
+
+/** Videos in the pool matching a search, shown instantly while YouTube is asked. */
+export function searchPool(q: string): Candidate[] {
+  return matchPool(state.pool, ctx(), q, [], 12).filter((c) => c.tier !== 'shorts');
+}
+
+/** Claude's tappable suggestions for the Ask panel, refreshed about daily. */
+export async function getSuggestions(keys: ApiKeys, force = false): Promise<Suggestion[]> {
+  const cached = state.suggestions;
+  if (!force && cached && Date.now() - cached.at < 20 * 60 * 60 * 1000 && cached.items.length) return cached.items;
+  const auth = claudeAuth(keys);
+  if (!auth) return cached?.items ?? [];
+  try {
+    const items = await suggestAsks(auth, plannerInput());
+    state.suggestions = { at: Date.now(), items };
+    persist();
+    return items;
+  } catch {
+    return cached?.items ?? [];
+  }
+}
+
 /** Remove something you told Wander, from Settings. */
 export function forget(kind: 'row' | 'interest' | 'rule', value: string) {
   if (kind === 'row') state.customRows = state.customRows.filter((r) => r.id !== value);
   if (kind === 'interest') state.pinned = state.pinned.filter((p) => p !== value);
   if (kind === 'rule') state.rules = state.rules.filter((p) => p !== value);
-  state.prepared = null;
   persist();
 }
 
@@ -471,6 +568,16 @@ export async function surprise(keys: ApiKeys, onProgress: (msg: string) => void)
   const feed = todaysFeed();
   if (!feed) throw new Error('No feed yet');
   if (feed.surprisesUsed >= SURPRISES_PER_DAY) return feed;
+  // Unseen wildcards already in the pool first: instant and free.
+  const fromPool = assembleSurprise(state.pool, ctx(), new Set(feedIds(feed)));
+  if (fromPool.length >= 3) {
+    for (const c of fromPool) state.shownCounts[c.id] = (state.shownCounts[c.id] ?? 0) + 1;
+    feed.surprisesUsed += 1;
+    feed.rows.push({ id: `surprise-${feed.surprisesUsed}`, title: 'Surprise', subtitle: 'You asked for it', items: fromPool });
+    state.feed = { ...feed };
+    persist();
+    return state.feed;
+  }
   const auth = claudeAuth(keys);
   let directions: Direction[] = [];
   onProgress('Finding something unexpected…');
@@ -547,6 +654,18 @@ export function recordWatch(c: Candidate, watchedSec: number, durationSec: numbe
   const signal = watchSignal(watchedSec, dur);
   state.profile = addSignal(state.profile, c.topic, signal, now, c.tier, { watched: watchedSec >= 20, exposed: true });
   state.facetProfile = addFacetSignal(state.facetProfile, c.facets, signal, now);
+  state.conceptProfile = addConceptSignal(state.conceptProfile, conceptsOf(c), signal * 0.8, now);
+  // The ranking model learns from how it went: finished = yes, bailed early = no, in between = weak yes.
+  if (fraction >= 0.5) learn(c, 1, 1);
+  else if (watchedSec < 20) learn(c, 0, 1);
+  else learn(c, 1, 0.3);
+  // Your recent watching steers the next background refill.
+  state.watchesSinceRefill += 1;
+  if (bgKeys) {
+    clearTimeout(watchTimer);
+    const k = bgKeys;
+    watchTimer = setTimeout(() => void maybeRefill(k).catch(() => undefined), 2 * 60 * 1000);
+  }
   if (watchedSec >= 20) {
     state.history = state.history.filter((h) => !(h.videoId === c.id && now - h.at < DAY));
     state.history.push({
@@ -573,6 +692,8 @@ export function lessLikeThis(c: Candidate) {
   const now = Date.now();
   state.profile = addSignal(state.profile, c.topic, LESS_LIKE_THIS_SIGNAL, now, c.tier);
   state.facetProfile = addFacetSignal(state.facetProfile, c.facets, LESS_LIKE_THIS_SIGNAL / 2, now);
+  state.conceptProfile = addConceptSignal(state.conceptProfile, conceptsOf(c), LESS_LIKE_THIS_SIGNAL / 2, now);
+  learn(c, 0, 1.5);
   state.dismissed.push(c.facets ? `${c.topic} (${c.facets.subject}, ${c.facets.format})` : c.topic);
   state.shownCounts[c.id] = (state.shownCounts[c.id] ?? 0) + 3;
   persist();
@@ -643,7 +764,7 @@ export function mergeTold(other: Told): Told {
   state.pinned = union(state.pinned, other.pinned ?? []);
   state.rules = union(state.rules, other.rules ?? []);
   state.customRows = rows.slice(-4);
-  if (JSON.stringify(getTold()) !== before) state.prepared = null;
+  void before;
   persist();
   return getTold();
 }

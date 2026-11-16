@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
 import type { ApiKeys } from '../lib/keys.ts';
@@ -112,6 +112,10 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  // Pull down at the top (phone) for a new set, like YouTube.
+  const pull = useRef<number | null>(null);
+  const [pullDist, setPullDist] = useState(0);
+
   const doNewSet = async () => {
     setBusy(true);
     setError('');
@@ -141,7 +145,26 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
   const surprisesLeft = feed ? SURPRISES_PER_DAY - feed.surprisesUsed : 0;
 
   return (
-    <div className="screen home">
+    <div
+      className="screen home"
+      onTouchStart={(e) => {
+        pull.current = window.scrollY <= 0 && !busy ? e.touches[0].clientY : null;
+      }}
+      onTouchMove={(e) => {
+        if (pull.current === null) return;
+        setPullDist(Math.max(0, Math.min(140, e.touches[0].clientY - pull.current)));
+      }}
+      onTouchEnd={() => {
+        if (pull.current !== null && pullDist > 80) doNewSet();
+        pull.current = null;
+        setPullDist(0);
+      }}
+    >
+      {pullDist > 0 && (
+        <div className="pull-indicator" style={{ height: pullDist * 0.6 }}>
+          {pullDist > 80 ? '↻ Release for a new set' : '↓ Pull for a new set'}
+        </div>
+      )}
       <header className="topbar">
         <div className="logo">
           <span className="logo-mark">✦</span> Wander
@@ -169,6 +192,9 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
             onClick={() => go(tv ? { kind: 'search' } : { kind: 'search', target: linkedTv() ? 'tv' : 'here', voice: true })}
           >
             <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14" /></svg>
+          </button>
+          <button className="icon-btn" aria-label="New set" onClick={doNewSet} disabled={busy}>
+            ↻
           </button>
           <button className="icon-btn" aria-label="Settings" onClick={() => go({ kind: 'settings' })}>
             <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.3.61.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.25.42.49.42h3.84c.24 0 .45-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2" /></svg>
@@ -233,14 +259,17 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
           <section className="the-end">
             <div className="the-end-mark">✦</div>
             <h3>That’s this set</h3>
-            <p className="muted">Wander learns from what you watch, so there’s nothing to rate. Want something else? Ask, or get a new set.</p>
+            <p className="muted">
+              Wander learns from what you watch, so there’s nothing to rate. Want something else? Ask, or get a new set (↻, or pull down at the
+              top). New sets come straight from your pool.
+            </p>
             <div className="end-actions">
               {setsLeftToday() > 0 ? (
                 <button className="btn" disabled={busy} onClick={doNewSet}>
-                  New set ({setsLeftToday()} left today)
+                  ↻ New set
                 </button>
               ) : (
-                <p className="muted small">No new sets left today (YouTube’s daily limit).</p>
+                <p className="muted small">Your pool is thin and YouTube’s daily limit is used up. More tomorrow.</p>
               )}
               {keys.anthropic && (
                 <button className="btn btn-ghost" disabled={busy} onClick={() => openAsk(false)}>

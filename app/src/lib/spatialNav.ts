@@ -171,6 +171,9 @@ function move(dir: Dir): boolean {
     if (scroller && offscreen && !current.closest('[data-own-keys]')) {
       // About a third of a screen: a few lines at a time, so you can read along.
       animateScrollBy(scroller, 'y', (dir === 'ArrowDown' ? 1 : -1) * view * 0.3);
+      // Don't leave focus stuck in the header (or scrolled out of view): once the page has moved,
+      // put it on the first thing you can now see in that direction.
+      setTimeout(() => settleFocusAfterPaging(current, dir), 260);
       return true;
     }
   }
@@ -178,6 +181,23 @@ function move(dir: Dir): boolean {
   best.focus({ preventScroll: true });
   reveal(best);
   return true;
+}
+
+function settleFocusAfterPaging(previous: HTMLElement, dir: 'ArrowUp' | 'ArrowDown') {
+  if (document.activeElement !== previous) return; // something else took focus meanwhile
+  const top = headerBottom();
+  const r = previous.getBoundingClientRect();
+  const stillVisible = r.bottom > top && r.top < window.innerHeight;
+  if (stillVisible && !previous.closest('.topbar')) return;
+  const visible = candidates().filter((el) => {
+    if (el.closest('.topbar')) return false;
+    const b = el.getBoundingClientRect();
+    return b.top >= top && b.bottom <= window.innerHeight;
+  });
+  visible.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+  const next = dir === 'ArrowDown' ? visible[0] : visible[visible.length - 1];
+  if (next) next.focus({ preventScroll: true });
+  else if (previous.closest('.topbar')) previous.blur();
 }
 
 /** Focus the first sensible element on screen (used when a screen opens). */
@@ -191,9 +211,77 @@ export function focusFirst(selector = '[data-autofocus]') {
 
 let installed = false;
 
+/**
+ * On a TV, landing on a text field shouldn't pop up the on-screen keyboard. Fields are
+ * read-only while you pass through; pressing OK on one unlocks it and opens the keyboard.
+ */
+let reopening = false;
+
+function lockTextFields() {
+  const isField = (el: EventTarget | null): el is HTMLInputElement | HTMLTextAreaElement =>
+    el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['button', 'checkbox', 'radio', 'submit'].includes(el.type));
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      const el = e.target;
+      if (reopening || !document.body.classList.contains('tv') || !isField(el) || el.dataset.tvEditing === '1') return;
+      if (!el.readOnly) {
+        el.readOnly = true;
+        el.dataset.tvLocked = '1';
+      }
+    },
+    true,
+  );
+  document.addEventListener(
+    'focusout',
+    (e) => {
+      const el = e.target;
+      if (reopening || !isField(el)) return;
+      if (el.dataset.tvEditing === '1') {
+        delete el.dataset.tvEditing;
+        el.readOnly = true;
+        el.dataset.tvLocked = '1';
+      }
+    },
+    true,
+  );
+  // A pointer click (mouse plugged into the TV, or a touchscreen) unlocks too.
+  document.addEventListener(
+    'click',
+    (e) => {
+      const el = e.target;
+      if (!isField(el) || el.dataset.tvLocked !== '1') return;
+      el.readOnly = false;
+      delete el.dataset.tvLocked;
+      el.dataset.tvEditing = '1';
+    },
+    true,
+  );
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      const el = document.activeElement;
+      if (!document.body.classList.contains('tv') || !isField(el) || el.dataset.tvLocked !== '1' || e.key !== 'Enter') return;
+      e.preventDefault();
+      e.stopPropagation();
+      el.readOnly = false;
+      delete el.dataset.tvLocked;
+      el.dataset.tvEditing = '1';
+      // Re-focus so Android shows the keyboard for the now-editable field.
+      reopening = true;
+      el.blur();
+      el.focus();
+      reopening = false;
+      el.click();
+    },
+    true,
+  );
+}
+
 export function enableSpatialNav() {
   if (installed) return;
   installed = true;
+  lockTextFields();
   document.addEventListener(
     'keydown',
     (e) => {
@@ -201,8 +289,9 @@ export function enableSpatialNav() {
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) return;
       const active = document.activeElement as HTMLElement | null;
       const tag = active?.tagName;
-      // Let text fields move their cursor left and right.
-      if ((tag === 'INPUT' || tag === 'TEXTAREA') && (key === 'ArrowLeft' || key === 'ArrowRight')) return;
+      // Let a text field you're typing in move its cursor left and right.
+      if ((tag === 'INPUT' || tag === 'TEXTAREA') && (active as HTMLElement).dataset.tvEditing === '1' && (key === 'ArrowLeft' || key === 'ArrowRight'))
+        return;
       if (active?.closest('[data-own-keys]') && (key === 'ArrowLeft' || key === 'ArrowRight')) return;
       e.preventDefault();
       move(key);
