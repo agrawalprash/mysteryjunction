@@ -24,7 +24,7 @@ import { addConceptSignal, conceptAffinity, conceptsOf, features, initialWeights
 import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } from '../engine/pool.ts';
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
-import { AUTO_BUDGET, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
+import { AUTO_BUDGET, channelUploads, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
 import { askWander, describeVideos, explainPicks, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
 import { pathId, type MapPlace } from './map.ts';
@@ -385,6 +385,7 @@ async function gather(keys: ApiKeys, focus: string, onProgress: (msg: string) =>
   onProgress(`Exploring ${directions.length} directions…`);
   const before = quotaUsed();
   const found = await runDirections(directions, keys, onProgress);
+  if (!focus) found.push(...(await fromFavouriteChannels(keys).catch(() => [])));
   state.setCosts = [...state.setCosts, quotaUsed() - before].slice(-10);
   await describe(found, auth, onProgress, quick ? QUICK_DESCRIBE : MAX_DESCRIBE);
   return { found, directions, note };
@@ -394,7 +395,7 @@ async function gather(keys: ApiKeys, focus: string, onProgress: (msg: string) =>
 function install(found: Candidate[], directions: Direction[], note: string, focus: string, extra: Candidate[] = []): DailyFeed {
   settlePreviousFeed();
   mergePool(found);
-  const feed = assembleFeed([...extra, ...state.pool], ctx(), localDate(), { note, focus, customRows: state.customRows });
+  const feed = assembleFeed([...extra, ...state.pool], ctx(), localDate(), { note, focus, customRows: state.customRows, familiar: activeProfile().options.familiar });
   const now = Date.now();
   for (const id of feedIds(feed)) state.shownCounts[id] = (state.shownCounts[id] ?? 0) + 1;
   for (const d of directions) state.recentTopics.push({ name: d.topic, at: now });
@@ -1072,4 +1073,34 @@ export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m
   }
   persist();
   return { videos: show(found) };
+}
+
+// ---------------------------------------------------------------- channels you like
+
+/** Channels whose videos this profile watches to the end, most first. */
+export function favouriteChannels(limit = 6): { id: string; title: string }[] {
+  const now = Date.now();
+  const counts = new Map<string, { id: string; title: string; n: number }>();
+  for (const h of state.history) {
+    if (h.fraction < 0.6 || now - h.at > 90 * DAY || state.muted.includes(h.channelId)) continue;
+    const c = counts.get(h.channelId) ?? { id: h.channelId, title: h.channelTitle, n: 0 };
+    c.n += 1;
+    counts.set(h.channelId, c);
+  }
+  return [...counts.values()].sort((a, b) => b.n - a.n).slice(0, limit);
+}
+
+async function fromFavouriteChannels(keys: ApiKeys): Promise<Candidate[]> {
+  const chans = favouriteChannels();
+  if (!chans.length) return [];
+  const now = Date.now();
+  const videos = await channelUploads(chans.map((c) => c.id), keys.youtube);
+  return videos.map((v) => ({
+    ...v,
+    topic: v.channelTitle,
+    tier: 'channel' as const,
+    because: `New from ${v.channelTitle}, which you watch to the end`,
+    query: '',
+    fetchedAt: now,
+  }));
 }

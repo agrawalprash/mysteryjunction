@@ -19,6 +19,8 @@ export interface ProfileOptions {
   contentCheck: boolean;
   /** A simple home: six big picks instead of rows. */
   simpleHome: boolean;
+  /** Share of each set from what this profile already loves (0.2 mostly new, 0.4 balanced, 0.6 mostly familiar). */
+  familiar: number;
 }
 
 export interface WanderProfile {
@@ -29,8 +31,8 @@ export interface WanderProfile {
 }
 
 export const PRESETS: Record<Preset, ProfileOptions> = {
-  adult: { playful: false, strictSafeSearch: false, readAloud: false, timer: false, dailyMinutes: 90, contentCheck: false, simpleHome: false },
-  kid: { playful: true, strictSafeSearch: true, readAloud: true, timer: true, dailyMinutes: 45, contentCheck: true, simpleHome: true },
+  adult: { playful: false, strictSafeSearch: false, readAloud: false, timer: false, dailyMinutes: 90, contentCheck: false, simpleHome: false, familiar: 0.4 },
+  kid: { playful: true, strictSafeSearch: true, readAloud: true, timer: true, dailyMinutes: 45, contentCheck: true, simpleHome: true, familiar: 0.5 },
 };
 
 export const PRESET_LABELS: Record<Preset, string> = { adult: 'Grown-up', kid: 'Kid' };
