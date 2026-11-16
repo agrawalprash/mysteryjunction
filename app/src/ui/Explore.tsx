@@ -14,7 +14,7 @@ import {
 } from '../lib/wander.ts';
 import { claudeAuth } from '../lib/keys.ts';
 import { drawAhead, findPlace, levelOf, pathId, savedLevel, topAreas, type MapLevel, type MapPlace } from '../lib/map.ts';
-import { listen } from '../lib/voice.ts';
+import { HoldToTalk } from './HoldToTalk.tsx';
 import { VideoCard } from './VideoCard.tsx';
 import { TimeChip } from './TimeChip.tsx';
 import { useTv } from './App.tsx';
@@ -104,7 +104,7 @@ function AskBar({
 }) {
   const tv = useTv();
   const [text, setText] = useState('');
-  const [voiceError, setVoiceError] = useState('');
+  const [heard, setHeard] = useState('');
   const view = useAskView();
   const here = browsing?.[browsing.length - 1];
 
@@ -115,24 +115,10 @@ function AskBar({
     openResults();
     void runExplore((p) => exploreAsk(keys, t, p, browsing), t).catch(() => undefined);
   };
-  const speak = async () => {
-    setVoiceError('');
-    try {
-      const said = await listen(here ? `Ask about ${here}` : 'Ask for anything');
-      if (said) submit(said);
-    } catch (e) {
-      setVoiceError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   return (
     <section className="explore-ask">
       <div className="ask-row">
-        {!tv && (
-          <button className="btn mic-btn" aria-label="Ask by voice" onClick={speak}>
-            🎤
-          </button>
-        )}
+        {!tv && <HoldToTalk compact label="Hold to speak" onSaid={submit} onLive={setHeard} />}
         <form
           className="ask-form"
           onSubmit={(e) => {
@@ -141,14 +127,13 @@ function AskBar({
           }}
         >
           <input
-            value={text}
+            value={heard || text}
             onChange={(e) => setText(e.target.value)}
             placeholder={here ? `Ask about ${here}, or anything else…` : 'Ask for anything: a topic, a mood, a change…'}
             enterKeyHint="send"
           />
         </form>
       </div>
-      {voiceError && <p className="small error-text">{voiceError}</p>}
     </section>
   );
 }

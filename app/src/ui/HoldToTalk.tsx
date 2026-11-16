@@ -2,7 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import { holdCancel, holdStart, holdStop } from '../lib/voice.ts';
 
 /** A walkie-talkie button: hold to speak, see the words as they come, release to send. */
-export function HoldToTalk({ label, onSaid, disabled = false }: { label: string; onSaid: (text: string) => void; disabled?: boolean }) {
+export function HoldToTalk({
+  label,
+  onSaid,
+  disabled = false,
+  compact = false,
+  onLive,
+}: {
+  label: string;
+  onSaid: (text: string) => void;
+  disabled?: boolean;
+  /** Just a mic icon (the words show wherever onLive puts them). */
+  compact?: boolean;
+  /** Words as they're heard, and '' when listening ends. */
+  onLive?: (text: string) => void;
+}) {
   const [live, setLive] = useState<{ text: string; ready: boolean } | null>(null);
   const [error, setError] = useState('');
   const starting = useRef<Promise<(() => void) | null> | null>(null);
@@ -19,7 +33,10 @@ export function HoldToTalk({ label, onSaid, disabled = false }: { label: string;
       /* no vibration */
     }
     starting.current = holdStart(
-      (text) => setLive((v) => (v ? { ...v, text } : v)),
+      (text) => {
+        setLive((v) => (v ? { ...v, text } : v));
+        onLive?.(text);
+      },
       () => setLive((v) => (v ? { ...v, ready: true } : v)),
     ).catch((e) => {
       setError(e instanceof Error ? e.message : String(e));
@@ -37,9 +54,11 @@ export function HoldToTalk({ label, onSaid, disabled = false }: { label: string;
     try {
       const said = (await holdStop()).trim();
       setLive(null);
+      onLive?.('');
       if (said) onSaid(said);
     } catch (e) {
       setLive(null);
+      onLive?.('');
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       cleanup();
@@ -49,7 +68,8 @@ export function HoldToTalk({ label, onSaid, disabled = false }: { label: string;
   return (
     <div className="hold-talk">
       <button
-        className={`btn hold-talk-btn${live ? ' hold-talk-on' : ''}`}
+        className={`btn hold-talk-btn${compact ? ' mic-btn' : ''}${live ? ' hold-talk-on' : ''}`}
+        aria-label={compact ? label : undefined}
         disabled={disabled}
         onPointerDown={(e) => {
           (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -59,7 +79,7 @@ export function HoldToTalk({ label, onSaid, disabled = false }: { label: string;
         onPointerCancel={() => void up()}
         onContextMenu={(e) => e.preventDefault()}
       >
-        🎤 {live ? (live.text || (live.ready ? 'Listening… release to send' : 'Starting the mic…')) : label}
+        🎤{compact ? '' : ` ${live ? live.text || (live.ready ? 'Listening… release to send' : 'Starting the mic…') : label}`}
       </button>
       {error && <p className="small error-text">{error}</p>}
     </div>
