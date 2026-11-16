@@ -6,8 +6,6 @@ import { formatDuration } from '../lib/format.ts';
 import { holdCancel, holdStart, holdStop } from '../lib/voice.ts';
 import { createGestures, type HoldZone } from '../lib/gestures.ts';
 import { VideoCard } from './VideoCard.tsx';
-import { AskSheet } from './AskSheet.tsx';
-import type { ApiKeys } from '../lib/keys.ts';
 import { setOverlayCloser } from '../lib/overlay.ts';
 
 interface TvState {
@@ -36,12 +34,10 @@ function tick(ms = 12) {
  * Swipe = arrows, tap = OK, press and hold = voice search (sent on release).
  */
 export function RemoteScreen({
-  keys,
   onBack,
   openDiagnose,
   openReport,
 }: {
-  keys: ApiKeys;
   onBack: () => void;
   openDiagnose: () => void;
   openReport: () => void;
@@ -52,7 +48,6 @@ export function RemoteScreen({
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [voice, setVoice] = useState<{ mode: VoiceMode; text: string; ready: boolean } | null>(null);
-  const [asking, setAsking] = useState(false);
   const [more, setMore] = useState(false);
   const [flash, setFlash] = useState('');
   const feedVersion = useRef(-1);
@@ -273,16 +268,6 @@ export function RemoteScreen({
               </p>
             )}
             <div className="remote-actions">
-              <button
-                className="btn"
-                onClick={() => {
-                  setMore(false);
-                  setAsking(true);
-                  setOverlayCloser(() => setAsking(false));
-                }}
-              >
-                ✦ Ideas from Claude
-              </button>
               <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'newSet' }, '↻ New set on the TV.'))}>
                 ↻ New set
               </button>
@@ -348,18 +333,6 @@ export function RemoteScreen({
         </div>
       )}
 
-      {asking && (
-        <AskSheet
-          keys={keys}
-          startWithVoice={false}
-          onClose={() => {
-            setAsking(false);
-            setOverlayCloser(null);
-            refresh();
-          }}
-          onFeed={() => refresh()}
-        />
-      )}
     </div>
   );
 }

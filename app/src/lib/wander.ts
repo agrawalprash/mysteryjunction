@@ -21,6 +21,7 @@ import {
 } from '../engine/profile.ts';
 import { assembleFeed, assembleSurprise, eligible, makeScorer, relatedFromPool, type FeedContext } from '../engine/feed.ts';
 import { addConceptSignal, conceptAffinity, conceptsOf, features, initialWeights, topConcepts, update, FEATURES, type Weights } from '../engine/learn.ts';
+import { computeWorlds, worldVideos, type Worlds } from '../engine/worlds.ts';
 import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } from '../engine/pool.ts';
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
@@ -879,4 +880,57 @@ export function guideProfile(id: string, change: { addRule?: string; forget?: { 
   if (f?.kind === 'rule') s.rules = s.rules.filter((p) => p !== f.value);
   if (isActive) persist();
   else save(stateKey(id), s);
+}
+
+// ---------------------------------------------------------------- explore
+
+/** Worlds to explore, from what's in the pool and what this profile likes. Instant, no API calls. */
+export function exploreWorlds(): Worlds {
+  const c = ctx();
+  const videos = state.pool.filter((v) => v.tier !== 'shorts' && eligible(v, c));
+  return computeWorlds(videos, state.conceptProfile, c.now);
+}
+
+/** The best videos waiting in one world. */
+export function worldItems(concept: string): Candidate[] {
+  const c = ctx();
+  const videos = state.pool.filter((v) => v.tier !== 'shorts' && eligible(v, c));
+  return worldVideos(videos, concept, makeScorer(c));
+}
+
+export interface ExploreResult {
+  /** What was asked or searched. */
+  text: string;
+  reply?: string;
+  changes?: string[];
+  /** Matches already in the pool (instant). */
+  poolHits: Candidate[];
+  /** Fresh results from YouTube. */
+  results: Candidate[];
+  /** Picks for a focus Claude chose. */
+  focus: Candidate[];
+  /** A new set is waiting on Home. */
+  newSet?: boolean;
+  notice?: string;
+}
+
+/** A plain search: what's in the pool now, then YouTube's results. */
+export async function exploreSearch(keys: ApiKeys, q: string): Promise<ExploreResult> {
+  const poolHits = searchPool(q);
+  const results = await search(q, keys);
+  const seen = new Set(results.map((r) => r.id));
+  return { text: q, poolHits: poolHits.filter((p) => !seen.has(p.id)), results, focus: [] };
+}
+
+/** Anything typed or said in Explore: Claude decides whether it's a search or a change, and acts. */
+export async function exploreAsk(keys: ApiKeys, text: string, onProgress: (msg: string) => void): Promise<ExploreResult> {
+  const t = text.trim();
+  if (!claudeAuth(keys)) return exploreSearch(keys, t);
+  const out = await ask(keys, t, onProgress);
+  if (out.search) {
+    onProgress(`Searching for “${out.search}”…`);
+    return { ...(await exploreSearch(keys, out.search)), text: t, reply: out.reply };
+  }
+  const focus = out.feed?.rows.find((r) => r.id === 'focus')?.items ?? [];
+  return { text: t, reply: out.reply, changes: out.changes, poolHits: [], results: [], focus, newSet: !!out.feed, notice: out.notice };
 }

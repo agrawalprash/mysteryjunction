@@ -9,7 +9,6 @@ import { focusFirst } from '../lib/spatialNav.ts';
 import { onVoiceKey } from '../lib/voice.ts';
 import { linkedTv } from '../lib/link.ts';
 import { setOverlayCloser } from '../lib/overlay.ts';
-import { AskSheet } from './AskSheet.tsx';
 import { FeedbackSheet } from './FeedbackSheet.tsx';
 import { FEEDBACK_ENABLED } from '../lib/feedback.ts';
 import { UpdateBanner } from './UpdateBanner.tsx';
@@ -22,25 +21,12 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<Set<string>>(new Set(getState().opened));
-  const [asking, setAsking] = useState<null | { voice: boolean }>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const openFeedback = () => {
     setFeedbackOpen(true);
     setOverlayCloser(() => setFeedbackOpen(false));
   };
   const tv = useTv();
-
-  const closeAsk = useCallback(() => {
-    setAsking(null);
-    setOverlayCloser(null);
-  }, []);
-  const openAsk = useCallback(
-    (voice: boolean) => {
-      setAsking({ voice });
-      setOverlayCloser(() => setAsking(null));
-    },
-    [],
-  );
 
   // A new set can arrive from elsewhere (a request from your phone, or an Ask that finished after closing).
   useEffect(
@@ -52,11 +38,11 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
     [],
   );
 
-  // The remote's mic button (when it reaches the app) opens Ask Wander and starts listening.
+  // The remote's mic button (when it reaches the app) opens Explore.
   useEffect(() => {
     if (!visible) return;
-    return onVoiceKey(() => openAsk(true));
-  }, [visible, openAsk]);
+    return onVoiceKey(() => go({ kind: 'explore' }));
+  }, [visible, go]);
 
   const showNewFeed = (f: DailyFeed) => {
     setFeed(f);
@@ -182,24 +168,14 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
               📺
             </button>
           )}
-          {keys.anthropic && (
-            <button className="ask-btn" onClick={() => openAsk(false)}>
-              ✦ Ask
-            </button>
-          )}
+          <button className="ask-btn" onClick={() => go({ kind: 'explore' })}>
+            ✦ Explore
+          </button>
           {FEEDBACK_ENABLED && (
             <button className="icon-btn" aria-label="Feedback to Claude" onClick={openFeedback}>
               💬
             </button>
           )}
-          <button
-            className="icon-btn"
-            aria-label="Search"
-            // On the phone: straight into voice, and onto the TV when linked. (The TV's own voice input doesn't work.)
-            onClick={() => go(tv ? { kind: 'search' } : { kind: 'search', target: linkedTv() ? 'tv' : 'here', voice: true })}
-          >
-            <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14" /></svg>
-          </button>
           <button className="icon-btn" aria-label="New set" onClick={doNewSet} disabled={busy}>
             ↻
           </button>
@@ -267,7 +243,7 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
             <div className="the-end-mark">✦</div>
             <h3>That’s this set</h3>
             <p className="muted">
-              Wander learns from what you watch, so there’s nothing to rate. Want something else? Ask, or get a new set (↻, or pull down at the
+              Wander learns from what you watch, so there’s nothing to rate. Want something else? Explore, or get a new set (↻, or pull down at the
               top). New sets come straight from your pool.
             </p>
             <div className="end-actions">
@@ -278,11 +254,9 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
               ) : (
                 <p className="muted small">Your pool is thin and YouTube’s daily limit is used up. More tomorrow.</p>
               )}
-              {keys.anthropic && (
-                <button className="btn btn-ghost" disabled={busy} onClick={() => openAsk(false)}>
-                  ✦ Ask Wander
-                </button>
-              )}
+              <button className="btn btn-ghost" disabled={busy} onClick={() => go({ kind: 'explore' })}>
+                ✦ Explore
+              </button>
               {surprisesLeft > 0 && (
                 <button className="btn btn-ghost" disabled={busy} onClick={doSurprise}>
                   Surprise me ({surprisesLeft})
@@ -302,7 +276,6 @@ export function Home({ keys, open, go, visible }: { keys: ApiKeys; open: (v: Can
           }}
         />
       )}
-      {asking && <AskSheet keys={keys} startWithVoice={asking.voice} onClose={closeAsk} onFeed={showNewFeed} />}
     </div>
   );
 }

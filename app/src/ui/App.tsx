@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import { claudeAuth, loadKeys, saveKeys, type ApiKeys } from '../lib/keys.ts';
 import { diagSnapshot, sayDiag, startDiag, stopDiag } from '../lib/diagStore.ts';
 import { linkedTv, startLinkServer, type LinkMessage } from '../lib/link.ts';
-import { ask, currentProfile, getTold, guideProfile, profileReport, mergeTold, newSet, onResume, search, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
+import { currentProfile, exploreAsk, exploreSearch, getTold, guideProfile, profileReport, mergeTold, newSet, onResume, setsLeftToday, startBackground, todaysFeed } from '../lib/wander.ts';
 import { controlPlayer, nowPlaying } from '../lib/nowPlaying.ts';
 import { checkForUpdate, installUpdate } from '../lib/updater.ts';
 import type { Candidate, DailyFeed } from '../engine/types.ts';
@@ -24,7 +24,7 @@ import { closeOverlay } from '../lib/overlay.ts';
 import { Setup } from './Setup.tsx';
 import { Home } from './Home.tsx';
 import { Player } from './Player.tsx';
-import { preloadSearch, Search } from './Search.tsx';
+import { Explore, runExplore } from './Explore.tsx';
 import { Settings } from './Settings.tsx';
 import { UpdatePopup } from './UpdatePopup.tsx';
 import { RemoteScreen } from './RemoteScreen.tsx';
@@ -35,7 +35,7 @@ import { listProfiles } from '../lib/profiles.ts';
 export type Screen =
   | { kind: 'home' }
   | { kind: 'player'; video: Candidate }
-  | { kind: 'search'; target?: 'here' | 'tv'; voice?: boolean }
+  | { kind: 'explore' }
   | { kind: 'remote' }
   | { kind: 'profiles' }
   | { kind: 'report' }
@@ -59,7 +59,8 @@ export function App() {
   const keysRef = useRef(keys);
   keysRef.current = keys;
   const [notice, setNotice] = useState('');
-  const [searchVersion, setSearchVersion] = useState(0);
+  // Phone requests (search, ask) show their results in Explore on the TV.
+  const showExplore = () => setStack((st) => (st[st.length - 1].kind === 'explore' ? st : [{ kind: 'home' }, { kind: 'explore' }]));
 
   useEffect(() => {
     let timer: number | undefined;
@@ -177,27 +178,15 @@ export function App() {
           return { profiles: listProfiles(), active: currentProfile().id, report: profileReport(msg.profileId) };
         case 'search': {
           if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
-          toast(`📱 Searching for “${msg.q}”…`);
-          const results = await search(msg.q, k);
-          preloadSearch(msg.q, results);
-          setSearchVersion((n) => n + 1);
-          setStack((st) => (st[st.length - 1].kind === 'search' ? st : [...st, { kind: 'search' }]));
-          return { count: results.length };
+          showExplore();
+          const r = await runExplore(() => exploreSearch(k, msg.q), msg.q);
+          return { count: r.results.length + r.poolHits.length };
         }
         case 'ask': {
           if (!k?.youtube) throw new Error('The TV has no keys yet. Send your keys first.');
-          toast(`📱 “${msg.text}”`);
-          const out = await ask(k, msg.text, () => undefined);
-          toast(`✦ ${out.reply}`);
-          if (out.search) {
-            // Claude read it as a search: run it and show the results.
-            const results = await search(out.search, k);
-            preloadSearch(out.search, results);
-            setSearchVersion((n) => n + 1);
-            setStack((st) => (st[st.length - 1].kind === 'search' ? st : [...st, { kind: 'search' }]));
-            return { reply: out.reply, changes: [], searched: out.search, count: results.length };
-          }
-          return { reply: out.reply, changes: out.changes, newSet: !!out.feed, notice: out.notice };
+          showExplore();
+          const r = await runExplore((p) => exploreAsk(k, msg.text, p), msg.text);
+          return { reply: r.reply, changes: r.changes ?? [], newSet: r.newSet, notice: r.notice, count: r.results.length + r.poolHits.length };
         }
       }
     }).catch((e) => console.warn('Link server failed', e));
@@ -278,21 +267,13 @@ export function App() {
         {current.kind === 'player' && (
           <Player key={current.video.id} video={current.video} onBack={back} open={(v) => replace({ kind: 'player', video: v })} />
         )}
-        {current.kind === 'search' && (
-          <Search
-            key={searchVersion}
-            keys={keys}
-            onBack={back}
-            open={(v) => push({ kind: 'player', video: v })}
-            initialTarget={current.target}
-            startWithVoice={current.voice}
-          />
+        {current.kind === 'explore' && (
+          <Explore keys={keys} onBack={back} goHome={() => setStack([{ kind: 'home' }])} open={(v) => push({ kind: 'player', video: v })} />
         )}
         {current.kind === 'report' && <Report keys={keys} onBack={back} />}
         {current.kind === 'profiles' && <ProfilePicker onDone={back} onManage={() => replace({ kind: 'settings' })} />}
         {current.kind === 'remote' && (
           <RemoteScreen
-            keys={keys}
             onBack={back}
             openDiagnose={() => push({ kind: 'settings' })}
             openReport={() => push({ kind: 'report' })}
@@ -316,7 +297,7 @@ export function App() {
     <TvContext.Provider value={tv}>
       {content}
       {keys.youtube && <UpdatePopup tv={tv} />}
-      {!tv && keys.youtube && linkedTv() && ['home', 'search', 'settings'].includes(current.kind) && (
+      {!tv && keys.youtube && linkedTv() && ['home', 'explore', 'settings', 'report'].includes(current.kind) && (
         <button className="remote-fab" onClick={() => push({ kind: 'remote' })}>
           📺 Remote
         </button>
