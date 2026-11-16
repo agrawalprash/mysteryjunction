@@ -17,7 +17,8 @@ export interface MapLevel {
 
 const place = (name: string, desc: string, query: string, concepts: string[]): MapPlace => ({ name, desc, query, concepts, path: [name] });
 
-export const AREAS: MapPlace[] = [
+/** Used only until Claude has drawn the top level (or without an Anthropic key). */
+export const FALLBACK_AREAS: MapPlace[] = [
   place('Science', 'How the universe, life and matter work', 'science explained documentary', ['science']),
   place('Nature & Animals', 'Wild places and the creatures in them', 'nature documentary animals', ['nature', 'animals']),
   place('History', 'Everything that happened before now', 'history documentary', ['history']),
@@ -40,9 +41,14 @@ const treeKey = () => `map-tree:${activeProfile().options.playful ? 'kid' : 'adu
 const tree = () => load<Record<string, MapLevel>>(treeKey(), {});
 
 /** A place's own info, from wherever it was seen (an area, a parent's list, or a sideways link). */
+/** The top-level areas: Claude's, once drawn, else the fallback list. */
+export function topAreas(): MapPlace[] {
+  return savedLevel([])?.children ?? FALLBACK_AREAS;
+}
+
 export function findPlace(path: string[]): MapPlace {
   if (path.length === 1) {
-    const a = AREAS.find((x) => pathId(x.path) === pathId(path));
+    const a = topAreas().find((x) => pathId(x.path) === pathId(path)) ?? FALLBACK_AREAS.find((x) => pathId(x.path) === pathId(path));
     if (a) return a;
   }
   const t = tree();
@@ -70,7 +76,7 @@ export function levelOf(auth: ClaudeAuth, path: string[]): Promise<MapLevel> {
   const p = mapChildren(
     auth,
     path,
-    AREAS.map((a) => a.name),
+    topAreas().map((a) => a.name),
   )
     .then((r) => {
       const level: MapLevel = {

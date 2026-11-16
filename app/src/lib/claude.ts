@@ -642,17 +642,22 @@ const MapLevel = z.object({
 export type MapPlaceInfo = z.infer<typeof MapPlace>;
 export type MapLevelInfo = z.infer<typeof MapLevel>;
 
-/** The places inside one place on the map (drawn once, then saved). */
+/** The places inside one place on the map (drawn once, then saved). An empty path draws the top level. */
 export async function mapChildren(auth: ClaudeAuth, path: string[], areas: string[]): Promise<MapLevelInfo> {
+  const top = path.length === 0;
   const res = await client(auth).beta.messages.parse({
     model: MODEL,
     max_tokens: 6000,
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(MapLevel) },
     system: forProfile(
-      `You draw a map of everything worth watching on YouTube, like the sections of a great library, so a viewer can discover what exists. Given a place on the map, list the places inside it: distinct, concrete, well-known enough to have good videos, and each a real step deeper. Go from familiar to surprising. Names are short and plain. The top-level areas are: ${areas.join(', ')}.`,
+      `You draw a map of everything worth watching on YouTube, like the sections of a great library, so a viewer can discover what exists. Given a place on the map, list the places inside it: distinct, concrete, well-known enough to have good videos, and each a real step deeper. Go from familiar to surprising. Names are short and plain.${
+        top
+          ? ' For the top level, give 12–16 broad areas that together cover everything worth watching, general rather than tuned to any one interest, so that nothing is left without a home.'
+          : ` The top-level areas are: ${areas.join(', ')}.`
+      }`,
     ),
-    messages: [{ role: 'user', content: `Place: ${path.join(' › ')}` }],
+    messages: [{ role: 'user', content: top ? 'Place: the whole map (draw the top-level areas)' : `Place: ${path.join(' › ')}` }],
   });
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude couldn’t draw this part of the map.');
   return res.parsed_output;
