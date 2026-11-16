@@ -169,36 +169,18 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
 
   const np = state?.nowPlaying;
 
+  // Status messages show briefly at the top of the pad, then fade.
+  useEffect(() => {
+    if (!status) return;
+    const t = window.setTimeout(() => setStatus(''), 7000);
+    return () => clearTimeout(t);
+  }, [status]);
+
+  // Corner and bar buttons must not start pad gestures.
+  const stop = (e: React.PointerEvent) => e.stopPropagation();
+
   return (
-    <div className="screen remote">
-      <header className="topbar">
-        <button className="icon-btn" aria-label="Back to Wander on the phone" onClick={onBack}>
-          <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z" /></svg>
-        </button>
-        <div className="topbar-title">📺 TV remote</div>
-        <span className={`link-dot${error ? ' link-dot-bad' : state ? ' link-dot-ok' : ''}`} title={error || 'Connected'} />
-      </header>
-
-      {!tv && <div className="error-box"><p>No TV linked yet: Settings → Link to TV.</p></div>}
-      {error && <div className="error-box"><p>{error}</p></div>}
-
-      <div className="remote-status-line">
-        {voice ? (
-          <span className="voice-live">
-            {voice.mode === 'ask' ? '✦ ' : '🔎 '}
-            {voice.text || (voice.ready ? 'Listening… speak now' : 'Starting the mic…')}
-          </span>
-        ) : status ? (
-          <span>{status}</span>
-        ) : np ? (
-          <span className="muted">
-            ▶ {np.title} · {formatDuration(Math.round(np.time))} / {formatDuration(Math.round(np.duration))}
-          </span>
-        ) : (
-          <span className="muted">Wander on the TV</span>
-        )}
-      </div>
-
+    <div className="screen remote remote-clean">
       <div
         className={`touchpad${voice ? ' touchpad-listening' : ''}${flash ? ` flash-${flash}` : ''}`}
         onPointerDown={(e) => {
@@ -210,6 +192,26 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
         onPointerCancel={() => gestures.cancel()}
         onContextMenu={(e) => e.preventDefault()}
       >
+        <button className="pad-corner pad-exit" aria-label="Back to Wander on the phone" onPointerDown={stop} onClick={onBack}>
+          ←
+        </button>
+        <span
+          className={`pad-corner pad-dot link-dot${error ? ' link-dot-bad' : state ? ' link-dot-ok' : ''}`}
+          title={error || 'Connected'}
+        />
+
+        <div className="pad-status">
+          {voice ? (
+            <span className="voice-live">{voice.text || (voice.ready ? 'Listening… speak now' : 'Starting the mic…')}</span>
+          ) : status ? (
+            <span>{status}</span>
+          ) : !tv ? (
+            <span className="pad-error">No TV linked: Settings → Link to TV</span>
+          ) : error ? (
+            <span className="pad-error">Can’t reach the TV. Is Wander open on it?</span>
+          ) : null}
+        </div>
+
         {voice ? (
           <div className="touchpad-voice">
             <div className="touchpad-mic">{voice.mode === 'ask' ? '✦' : '🔎'}</div>
@@ -220,85 +222,110 @@ export function RemoteScreen({ keys, onBack, openDiagnose }: { keys: ApiKeys; on
           </div>
         ) : (
           <div className="touchpad-hint">
-            <div className="touchpad-mic">🎤</div>
-            <div>
-              <b>Hold and speak</b> to search
-            </div>
-            <div className="muted small">While holding, slide ↓ to ask Claude instead (“something calm tonight”, “add a row for jazz”)</div>
+            <div className="pad-hint-mic">🎤</div>
+            <div>Hold to speak</div>
             <div className="muted small">Swipe to move · Tap for OK</div>
           </div>
         )}
       </div>
 
-      <div className="remote-row">
-        <button className="btn btn-ghost" onClick={() => key('Back')}>↩ Back</button>
+      <nav className="remote-bar">
+        <button aria-label="Back" onClick={() => key('Back')}>↩</button>
+        <button aria-label="Home" onClick={() => key('Home')}>⌂</button>
         <button
-          className="btn ask-hold"
+          aria-label="More"
           onClick={() => {
-            setAsking(true);
-            setOverlayCloser(() => setAsking(false));
+            setMore(true);
+            setOverlayCloser(() => setMore(false));
           }}
         >
-          ✦ Ideas
+          ⋯
         </button>
-        <button className="btn btn-ghost" onClick={() => key('Home')}>⌂ Home</button>
-        <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'player', action: 'toggle' }))}>
-          {np?.playing ? '⏸' : '⏯'}
-        </button>
-      </div>
-      <p className="muted small remote-tip">Hold to search · hold and slide ↓ to ask Claude · ✦ Ideas for suggestions</p>
+      </nav>
 
-      <button className="more-toggle" onClick={() => setMore((m) => !m)}>
-        {more ? '▴ Less' : '▾ More'}
-      </button>
       {more && (
-        <>
-          <div className="remote-row">
-            <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'player', action: 'back' }))}>⏪ 10s</button>
-            <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'player', action: 'forward' }))}>10s ⏩</button>
-            <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'newSet' }, '↻ New set on the TV.'))}>↻ New set</button>
+        <div
+          className="sheet-backdrop"
+          onClick={() => {
+            setMore(false);
+            setOverlayCloser(null);
+          }}
+        >
+          <div className="sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="More">
+            <div className="remote-row">
+              <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'player', action: 'back' }))}>⏪ 10s</button>
+              <button className="btn" onClick={() => (tick(), send({ type: 'player', action: 'toggle' }))}>{np?.playing ? '⏸' : '⏯'}</button>
+              <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'player', action: 'forward' }))}>10s ⏩</button>
+            </div>
+            {np && (
+              <p className="muted small more-np">
+                ▶ {np.title} · {formatDuration(Math.round(np.time))} / {formatDuration(Math.round(np.duration))}
+              </p>
+            )}
+            <div className="remote-actions">
+              <button
+                className="btn"
+                onClick={() => {
+                  setMore(false);
+                  setAsking(true);
+                  setOverlayCloser(() => setAsking(false));
+                }}
+              >
+                ✦ Ideas from Claude
+              </button>
+              <button className="btn btn-ghost" onClick={() => (tick(), send({ type: 'newSet' }, '↻ New set on the TV.'))}>
+                ↻ New set
+              </button>
+              <button className="btn btn-ghost" onClick={openDiagnose}>
+                🩺 Diagnose TV
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={async () => {
+                  setStatus('Checking for an update on the TV…');
+                  try {
+                    const r = (await sendToTv({ type: 'update' })) as { upToDate?: boolean; status?: string; version?: string };
+                    setStatus(
+                      r.upToDate
+                        ? `The TV already has the latest version (${r.version}).`
+                        : r.status === 'needs-permission'
+                          ? 'On the TV: allow installs from Wander (one time), then press Update TV again.'
+                          : `On the TV: press Install with the remote to finish updating to ${r.version}.`,
+                    );
+                  } catch (e) {
+                    setStatus(`✗ ${e instanceof Error ? e.message : String(e)}`);
+                  }
+                }}
+              >
+                ⬆ Update TV{state ? ` (${state.version})` : ''}
+              </button>
+            </div>
+            {error && <p className="small error-text">{error}</p>}
+            {feed && (
+              <>
+                <h3 className="list-title">The TV’s set: tap to play there</h3>
+                {feed.rows.map((row) => (
+                  <section key={row.id} className="row">
+                    <h2>{row.title}</h2>
+                    <div className="row-scroll">
+                      {row.items.map((v: Candidate) => (
+                        <VideoCard
+                          key={v.id}
+                          video={v}
+                          onOpen={(c) => {
+                            setMore(false);
+                            setOverlayCloser(null);
+                            void send({ type: 'play', video: c }, `▶ Playing on the TV: ${c.title}`);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </>
+            )}
           </div>
-          <div className="remote-actions">
-            <button className="btn btn-ghost" onClick={openDiagnose}>
-              🩺 Diagnose TV
-            </button>
-            <button
-              className="btn btn-ghost"
-              onClick={async () => {
-                setStatus('Checking for an update on the TV…');
-                try {
-                  const r = (await sendToTv({ type: 'update' })) as { upToDate?: boolean; status?: string; version?: string };
-                  setStatus(
-                    r.upToDate
-                      ? `The TV already has the latest version (${r.version}).`
-                      : r.status === 'needs-permission'
-                        ? 'On the TV: allow installs from Wander (one time), then press Update TV again.'
-                        : `On the TV: press Install with the remote to finish updating to ${r.version}.`,
-                  );
-                } catch (e) {
-                  setStatus(`✗ ${e instanceof Error ? e.message : String(e)}`);
-                }
-              }}
-            >
-              ⬆ Update TV{state ? ` (${state.version})` : ''}
-            </button>
-          </div>
-          {feed && (
-            <main>
-              <p className="planner-note">The TV’s set: tap a video to play it there.</p>
-              {feed.rows.map((row) => (
-                <section key={row.id} className="row">
-                  <h2>{row.title}</h2>
-                  <div className="row-scroll">
-                    {row.items.map((v: Candidate) => (
-                      <VideoCard key={v.id} video={v} onOpen={(c) => send({ type: 'play', video: c }, `▶ Playing on the TV: ${c.title}`)} />
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </main>
-          )}
-        </>
+        </div>
       )}
 
       {asking && (

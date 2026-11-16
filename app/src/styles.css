@@ -456,3 +456,33 @@ body:not(.tv) .screen { padding-bottom: calc(96px + env(safe-area-inset-bottom))
 .zone-bottom.zone-on { border-radius: 0 0 20px 20px; }
 .wrong-chip { display: inline-block; margin: 6px 0 0 0; font-size: 13px; padding: 5px 10px; }
 .touchpad-hint .small { max-width: 80%; }
+/* Clean full-screen remote */
+body:not(.tv) .screen.remote-clean { padding: 0; }
+.remote-clean { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+.remote-clean .touchpad {
+  flex: 1; min-height: 0; margin: calc(8px + env(safe-area-inset-top)) 8px 0; border-radius: 26px;
+}
+.pad-corner { position: absolute; top: 10px; z-index: 2; }
+.pad-exit {
+  left: 10px; width: 40px; height: 40px; border-radius: 50%; border: 0; font-size: 20px;
+  background: rgba(255, 255, 255, 0.06); color: var(--muted); cursor: pointer;
+}
+.pad-dot { right: 16px; top: 24px; margin: 0; }
+.pad-status {
+  position: absolute; top: 58px; left: 16px; right: 16px; text-align: center; font-size: 16px;
+  pointer-events: none; min-height: 1.4em;
+}
+.pad-error { color: #ffb4b4; font-size: 14px; }
+.pad-hint-mic { font-size: 40px; opacity: 0.5; }
+.touchpad-hint { color: #cfcfcf; opacity: 0.75; }
+.remote-bar {
+  display: flex; justify-content: space-around; align-items: center;
+  height: calc(64px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+}
+.remote-bar button {
+  flex: 1; height: 100%; border: 0; background: none; color: var(--text); font-size: 26px; cursor: pointer;
+}
+.remote-bar button:active { color: var(--brand); }
+.more-np { text-align: center; margin: 2px 0 10px; }
+.sheet .remote-actions { margin: 8px 0; }
+.sheet .row h2, .sheet .row-scroll { padding-left: 0; margin-left: 0; }
