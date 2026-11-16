@@ -438,7 +438,7 @@ export async function askWander(auth: ClaudeAuth, ctx: AskContext): Promise<AskR
     system: forProfile(ASK_SYSTEM),
     messages: [{ role: 'user', content: lines.join('\n') }],
   });
-  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude didn’t answer that one. Try saying it differently.');
+  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error(`Claude didn’t answer that one (${res.stop_reason ?? 'no answer'}). Try saying it differently.`);
   return res.parsed_output;
 }
 
@@ -673,7 +673,7 @@ export interface RouteInput {
 export async function routeAsk(auth: ClaudeAuth, input: RouteInput): Promise<RouteResult> {
   const res = await client(auth).beta.messages.parse({
     model: FAST_MODEL,
-    max_tokens: 2000,
+    max_tokens: 8000,
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(Route) },
     system: forProfile(
@@ -691,6 +691,6 @@ export async function routeAsk(auth: ClaudeAuth, input: RouteInput): Promise<Rou
       },
     ],
   });
-  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude didn’t catch that. Try saying it differently.');
+  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error(`Couldn’t route that (${res.stop_reason ?? 'no answer'}).`);
   return res.parsed_output;
 }

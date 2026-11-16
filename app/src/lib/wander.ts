@@ -928,13 +928,17 @@ export async function exploreAsk(keys: ApiKeys, text: string, onProgress: (msg: 
   if (!auth) return exploreSearch(keys, t);
   // A quick first decision (fast model): a place to explore, a specific search, or a change.
   onProgress('Claude is listening…');
-  const route = await routeAsk(auth, { request: t, topAreas: topAreas().map((a) => a.name), browsing, similar: similarPlaces(t) });
-  if (route.kind === 'place' && route.place.path.length) {
+  // If the quick step fails for any reason, the main model below handles it instead.
+  const route = await routeAsk(auth, { request: t, topAreas: topAreas().map((a) => a.name), browsing, similar: similarPlaces(t) }).catch((e) => {
+    console.warn('Quick routing failed, asking the main model', e);
+    return null;
+  });
+  if (route?.kind === 'place' && route.place.path.length) {
     const path = route.place.path.map((x) => x.trim()).filter(Boolean);
     addPlace({ name: path[path.length - 1], desc: route.place.desc, query: route.place.query, concepts: route.place.concepts, path }, browsing);
     return { text: t, reply: route.reply, poolHits: [], results: [], focus: [], place: path };
   }
-  if (route.kind === 'search' && route.search.trim()) {
+  if (route?.kind === 'search' && route.search.trim()) {
     onProgress(`Searching for “${route.search}”…`);
     return { ...(await exploreSearch(keys, route.search.trim())), text: t, reply: route.reply };
   }
