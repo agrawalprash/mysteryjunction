@@ -347,9 +347,17 @@ export function newSet(keys: ApiKeys, focus: string, onProgress: (msg: string) =
       afterShowing(keys, []);
       return feed;
     }
-    if (quotaUsed() + setCost() > AUTO_BUDGET) throw new Error('YouTube’s daily limit is used up and your pool is thin. More tomorrow.');
+    if (quotaUsed() + setCost() > AUTO_BUDGET) return setFromWhatWeHave(keys);
     const gen = generation;
-    const { found, directions, note } = await gather(keys, focus, onProgress, true);
+    let gathered: Awaited<ReturnType<typeof gather>>;
+    try {
+      gathered = await gather(keys, focus, onProgress, true);
+    } catch (e) {
+      // YouTube said no (usually the daily limit): show what's already here rather than nothing.
+      if (e instanceof YouTubeError) return setFromWhatWeHave(keys);
+      throw e;
+    }
+    const { found, directions, note } = gathered;
     if (gen !== generation) throw new Error('Switched profile while the set was being made.');
     onProgress('Picking your set…');
     const feed = install(found, directions, note, focus);
@@ -1026,6 +1034,8 @@ export interface PlaceVideos {
 }
 
 const PLACE_CACHE = 7 * DAY;
+/** Map pages stop searching this far before the daily limit, so sets and top-ups always have room. */
+const PLACE_RESERVE = 2500;
 const PLACES_KEPT = 40;
 
 /** A place's videos: one YouTube search for that place (kept for a week), filtered and ordered for this profile. */
@@ -1045,7 +1055,7 @@ export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m
   const cached = state.mapVideos[id];
   if (cached?.videos && Date.now() - cached.at < PLACE_CACHE) return { videos: show(cached.videos) };
 
-  if (quotaUsed() + 101 > AUTO_BUDGET) {
+  if (quotaUsed() + 101 > AUTO_BUDGET - PLACE_RESERVE) {
     const fromPool = matchPool(state.pool, ctx(), `${place.name} ${place.desc}`, place.concepts, 18).filter((v) => v.tier !== 'shorts');
     return { videos: fromPool, note: 'YouTube’s daily limit is used up, so these are from videos you already have. Fresh ones tomorrow.' };
   }
@@ -1121,4 +1131,40 @@ async function fromFavouriteChannels(keys: ApiKeys): Promise<Candidate[]> {
     query: '',
     fetchedAt: now,
   }));
+}
+
+// ---------------------------------------------------------------- when YouTube's limit is used up
+
+/**
+ * A set from what's already on the device. If this profile's pool is thin, it borrows videos from
+ * other profiles' pools that pass this profile's rules (for kids: Claude's kid-safe check).
+ */
+function setFromWhatWeHave(keys: ApiKeys): DailyFeed {
+  const c = ctx();
+  const enough = () => state.pool.filter((v) => v.tier !== 'shorts' && eligible(v, c)).length >= 12;
+  if (!enough()) {
+    const mine = new Set(state.pool.map((v) => v.id));
+    const borrowed: Candidate[] = [];
+    for (const p of listProfiles()) {
+      if (p.id === activeProfile().id) continue;
+      for (const v of stateFor(p.id).pool) {
+        if (!mine.has(v.id) && eligible(v, c)) {
+          borrowed.push(v);
+          mine.add(v.id);
+        }
+      }
+    }
+    mergePool(borrowed);
+  }
+  if (!state.pool.some((v) => eligible(v, c))) throw new Error(`YouTube’s daily limit is used up and there’s nothing saved to show yet. It resets at ${quotaResetTime()}.`);
+  const feed = install([], [], 'YouTube’s daily limit is used up, so this set is made from videos already on this TV. Fresh ones tomorrow.', '');
+  afterShowing(keys, []);
+  return feed;
+}
+
+/** When YouTube's daily limit resets (midnight US Pacific), in local time. */
+export function quotaResetTime(now = new Date()): string {
+  const la = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  const msToMidnight = (24 * 3600 - (la.getHours() * 3600 + la.getMinutes() * 60 + la.getSeconds())) * 1000;
+  return new Date(now.getTime() + msToMidnight).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
