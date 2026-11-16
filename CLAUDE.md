@@ -27,14 +27,13 @@ Native code (Java, `app/android/app/src/main/java/io/github/agrawalprash/wander/
 ## Shape of the app
 
 - `src/engine/`: pure, tested logic. Pool of ~1200 videos, ranking (concept taste, online logistic regression,
-  Thompson sampling), set assembly with variety tiers (core/adjacent/wildcard/archive/shorts/focus/custom),
-  Explore worlds (`worlds.ts`).
+  Thompson sampling), set assembly with variety tiers (core/adjacent/wildcard/archive/shorts/focus/custom).
 - `src/lib/wander.ts`: per-profile state and the pipeline (refill in the background, instant sets from the pool,
   Ask, search, reports, Explore). `profiles.ts`: profiles, presets (Grown-up, Kid), options, parent PIN.
   `claude.ts`: every Claude call (model `claude-opus-5-5`, structured outputs, `forProfile()` adds kid instructions).
   `youtube.ts`: Data API with caches and quota tracking. `link.ts`: phone ↔ TV over Wi-Fi (pairing code).
   `screenTime.ts`: daily TV time per profile.
-- `src/ui/`: Home (rows, or six picks for kids), Explore (hub → world page / results page), Player, Remote (phone
+- `src/ui/`: Home (rows, or six picks for kids), Explore (hub → map pages at any depth / results page; `lib/map.ts` keeps the map), Player, Remote (phone
   touchpad remote for the TV), Report (phone: per-profile report and instructions for Claude), Settings, Goodbye,
   PinPad. TV navigation is custom (`lib/spatialNav.ts`), sizes in rem on TV.
 

@@ -401,6 +401,8 @@ export interface AskContext {
   taste: TasteProfile | null;
   interests: string[];
   currentFocus: string;
+  /** Where in Explore's map the viewer is, if anywhere ("History › Rome › Aqueducts"). */
+  browsing?: string;
 }
 
 const ASK_SYSTEM = `You are the voice of Wander, a YouTube app that plans varied, interesting feeds for one person. The viewer just told you something, usually by voice (so expect transcription slips). Decide what to change:
@@ -421,6 +423,9 @@ export async function askWander(auth: ClaudeAuth, ctx: AskContext): Promise<AskR
     `Learned interests: ${ctx.interests.join('; ') || 'none yet'}`,
     `Taste profile: ${ctx.taste?.summary ?? 'not written yet'}`,
     `Current set is centred on: ${ctx.currentFocus || 'nothing in particular'}`,
+    ...(ctx.browsing
+      ? [`The viewer is browsing this place on Explore's map: ${ctx.browsing}. Words like "this", "here" or "more like this" refer to it; a plain request is usually a search within it.`]
+      : []),
   ];
   const res = await client(auth).beta.messages.parse({
     model: MODEL,
@@ -618,4 +623,37 @@ export async function goodbyeIdea(auth: ClaudeAuth, watchedToday: string[]): Pro
     messages: [{ role: 'user', content: `Watched today: ${watchedToday.join(' | ') || 'nothing in particular'}` }],
   });
   return res.parsed_output?.idea?.trim() ?? '';
+}
+
+// ---------------------------------------------------------------- Explore's map
+
+const MapPlace = z.object({
+  name: z.string().describe('Short name, 1–4 words, title case.'),
+  desc: z.string().describe('One line, under 10 words, saying what is there.'),
+  query: z.string().describe('A YouTube search query that finds good videos about this place.'),
+  concepts: z.array(z.string()).describe('2–5 lowercase concept tags for it (like "roman engineering", "water").'),
+});
+const MapLevel = z.object({
+  children: z.array(MapPlace).describe('The places inside, 6–12, together covering this place well, from best-known to less obvious.'),
+  elsewhere: z
+    .array(MapPlace.extend({ path: z.array(z.string()).describe("Its full path from a top-level area, ending with the place's own name.") }))
+    .describe('1–3 related places in other parts of the map, for hopping sideways.'),
+});
+export type MapPlaceInfo = z.infer<typeof MapPlace>;
+export type MapLevelInfo = z.infer<typeof MapLevel>;
+
+/** The places inside one place on the map (drawn once, then saved). */
+export async function mapChildren(auth: ClaudeAuth, path: string[], areas: string[]): Promise<MapLevelInfo> {
+  const res = await client(auth).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 6000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(MapLevel) },
+    system: forProfile(
+      `You draw a map of everything worth watching on YouTube, like the sections of a great library, so a viewer can discover what exists. Given a place on the map, list the places inside it: distinct, concrete, well-known enough to have good videos, and each a real step deeper. Go from familiar to surprising. Names are short and plain. The top-level areas are: ${areas.join(', ')}.`,
+    ),
+    messages: [{ role: 'user', content: `Place: ${path.join(' › ')}` }],
+  });
+  if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude couldn’t draw this part of the map.');
+  return res.parsed_output;
 }

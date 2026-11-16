@@ -21,13 +21,13 @@ import {
 } from '../engine/profile.ts';
 import { assembleFeed, assembleSurprise, eligible, makeScorer, relatedFromPool, type FeedContext } from '../engine/feed.ts';
 import { addConceptSignal, conceptAffinity, conceptsOf, features, initialWeights, topConcepts, update, FEATURES, type Weights } from '../engine/learn.ts';
-import { computeWorlds, nearbyWorlds, worldVideos, type World } from '../engine/worlds.ts';
 import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } from '../engine/pool.ts';
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
 import { AUTO_BUDGET, fetchDirection, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
 import { askWander, describeVideos, explainPicks, planDay, planSurprise, suggestAsks, writeTasteProfile, type ClaudeAuth, type PlannerInput, type Suggestion } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
+import { pathId, type MapPlace } from './map.ts';
 import { getSettings } from './settings.ts';
 import { timeStatus, type TimeStatus } from './screenTime.ts';
 import { activeProfile, deleteProfile, listProfiles, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
@@ -68,6 +68,10 @@ interface State {
   suggestions: { at: number; items: Suggestion[] } | null;
   lastRefill: number;
   watchesSinceRefill: number;
+  /** Explore's map: places opened, videos watched from each place, and fetched videos per place. */
+  mapVisits: Record<string, { path: string[]; at: number }>;
+  mapWatch: Record<string, number>;
+  mapVideos: Record<string, { at: number; ids: string[] }>;
 }
 
 function fresh(): State {
@@ -95,6 +99,9 @@ function fresh(): State {
     suggestions: null,
     lastRefill: 0,
     watchesSinceRefill: 0,
+    mapVisits: {},
+    mapWatch: {},
+    mapVideos: {},
   };
 }
 
@@ -481,7 +488,7 @@ export interface AskOutcome {
 }
 
 /** Hand what the viewer said to Claude, apply what it decides, and make a new set if needed. */
-export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string) => void): Promise<AskOutcome> {
+export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string) => void, browsing?: string[]): Promise<AskOutcome> {
   const auth = claudeAuth(keys);
   if (!auth) throw new Error('Talking to Wander needs an Anthropic key (Settings → Change API keys).');
   onProgress('Claude is listening…');
@@ -495,6 +502,7 @@ export async function ask(keys: ApiKeys, text: string, onProgress: (msg: string)
     taste: state.taste,
     interests: coreInterests(state.profile, now).map((t) => t.name),
     currentFocus: state.feed?.focus ?? '',
+    browsing: browsing?.join(' › '),
   });
 
   if (gen !== generation) throw new Error('Switched profile while Claude was thinking.');
@@ -685,6 +693,8 @@ export function markOpened(c: Candidate) {
 }
 
 export function recordWatch(c: Candidate, watchedSec: number, durationSec: number) {
+  const fromPlace = openedFrom.get(c.id);
+  if (fromPlace && watchedSec >= 20) state.mapWatch[fromPlace] = (state.mapWatch[fromPlace] ?? 0) + 1;
   const dur = durationSec || c.durationSec;
   const fraction = dur > 0 ? Math.min(1, watchedSec / dur) : 0;
   const now = Date.now();
@@ -901,49 +911,6 @@ export function guideProfile(id: string, change: { addRule?: string; forget?: { 
 
 // ---------------------------------------------------------------- explore
 
-export interface WorldTile extends World {
-  /** The thumbnail of its best video. */
-  thumb: string;
-}
-
-function exploreVideos(): Candidate[] {
-  const c = ctx();
-  return state.pool.filter((v) => v.tier !== 'shorts' && eligible(v, c));
-}
-
-/** Worlds to explore, from what's in the pool and what this profile likes. Instant, no API calls. */
-export function exploreWorlds(): { yours: WorldTile[]; edges: WorldTile[] } {
-  const videos = exploreVideos();
-  const w = computeWorlds(videos, state.conceptProfile, Date.now());
-  const score = makeScorer({ ...ctx(), rng: () => 0.5 });
-  const tile = (x: World): WorldTile => ({ ...x, thumb: worldVideos(videos, x.concept, score, 1)[0]?.thumb ?? '' });
-  return { yours: w.yours.map(tile), edges: w.edges.map(tile) };
-}
-
-export interface WorldShelves {
-  best: Candidate[];
-  short: Candidate[];
-  deeper: Candidate[];
-  nearby: string[];
-  count: number;
-}
-
-/** One world's page: its best videos, short ones, deeper ones, and the worlds next to it. */
-export function worldShelves(concept: string): WorldShelves {
-  const videos = exploreVideos();
-  const all = worldVideos(videos, concept, makeScorer(ctx()), 200);
-  const used = new Set<string>();
-  const take = (list: Candidate[], n: number) => {
-    const out = list.filter((v) => !used.has(v.id)).slice(0, n);
-    out.forEach((v) => used.add(v.id));
-    return out;
-  };
-  const best = take(all, 10);
-  const short = take(all.filter((v) => v.durationSec <= 8 * 60), 10);
-  const deeper = take(all.filter((v) => v.durationSec >= 20 * 60 || v.facets?.depth === 'deep'), 10);
-  return { best, short, deeper, nearby: nearbyWorlds(videos, concept).map((w) => w.concept), count: all.length };
-}
-
 export interface ExploreResult {
   /** What was asked or searched. */
   text: string;
@@ -969,10 +936,10 @@ export async function exploreSearch(keys: ApiKeys, q: string): Promise<ExploreRe
 }
 
 /** Anything typed or said in Explore: Claude decides whether it's a search or a change, and acts. */
-export async function exploreAsk(keys: ApiKeys, text: string, onProgress: (msg: string) => void): Promise<ExploreResult> {
+export async function exploreAsk(keys: ApiKeys, text: string, onProgress: (msg: string) => void, browsing?: string[]): Promise<ExploreResult> {
   const t = text.trim();
   if (!claudeAuth(keys)) return exploreSearch(keys, t);
-  const out = await ask(keys, t, onProgress);
+  const out = await ask(keys, t, onProgress, browsing);
   if (out.search) {
     onProgress(`Searching for “${out.search}”…`);
     return { ...(await exploreSearch(keys, out.search)), text: t, reply: out.reply };
@@ -1008,4 +975,69 @@ async function explainFeed(auth: ClaudeAuth) {
   state.feed = { ...feed, rows: feed.rows.map((r) => ({ ...r, items: r.items.map(add) })) };
   persist();
   emitFeedChanged();
+}
+
+// ---------------------------------------------------------------- Explore's map
+
+/** Which place on the map a video was opened from, so watching it lights up that place. */
+const openedFrom = new Map<string, string>();
+export function noteOpenedFrom(videoId: string, path: string[]) {
+  openedFrom.set(videoId, pathId(path));
+}
+
+export function visitPlace(path: string[]) {
+  state.mapVisits[pathId(path)] = { path, at: Date.now() };
+  persist();
+}
+
+/** The places opened most recently (deepest first when tied), for "Pick up where you were". */
+export function recentPlaces(n = 4): string[][] {
+  return Object.values(state.mapVisits)
+    .filter((v) => v.path.length > 1)
+    .sort((a, b) => b.at - a.at)
+    .slice(0, n)
+    .map((v) => v.path);
+}
+
+export type PlaceMark = 'love' | 'watched' | 'none';
+
+/** How a place is marked: videos watched from it or anywhere inside it. */
+export function placeMark(path: string[]): PlaceMark {
+  const id = pathId(path);
+  let n = 0;
+  for (const [k, v] of Object.entries(state.mapWatch)) if (k === id || k.startsWith(id + ' › ')) n += v;
+  return n >= 3 ? 'love' : n >= 1 ? 'watched' : 'none';
+}
+
+/** How many places inside an area have been opened. */
+export function placesVisitedIn(path: string[]): number {
+  const id = pathId(path);
+  return Object.keys(state.mapVisits).filter((k) => k.startsWith(id + ' › ')).length;
+}
+
+/** Videos for a place: from the pool first; fetched (one search) only when the pool has too few. */
+export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m: string) => void = () => undefined): Promise<Candidate[]> {
+  const c = ctx();
+  const id = pathId(place.path);
+  const text = `${place.name} ${place.desc}`;
+  const fromPool = matchPool(state.pool, c, text, place.concepts, 12).filter((v) => v.tier !== 'shorts');
+  const byId = new Map(state.pool.map((v) => [v.id, v]));
+  const cached = (state.mapVideos[id]?.ids ?? []).map((x) => byId.get(x)).filter((v): v is Candidate => !!v && eligible(v, c));
+  const have = [...new Map([...cached, ...fromPool].map((v) => [v.id, v])).values()];
+  const fresh = state.mapVideos[id] && Date.now() - state.mapVideos[id].at < 7 * DAY;
+  if (have.length >= 6 || fresh || quotaUsed() + 101 > AUTO_BUDGET) return have.slice(0, 12);
+
+  onProgress('Finding videos for this place…');
+  const now = Date.now();
+  const gen = generation;
+  const ids = await searchIds(place.query, keys.youtube, { maxResults: 25, language: getSettings().language, duration: 'medium' });
+  const videos = await videoDetails(ids, keys.youtube);
+  const found: Candidate[] = videos.map((v) => ({ ...v, topic: place.name, tier: 'search' as const, because: `On the map: ${place.path.join(' › ')}`, query: place.query, fetchedAt: now }));
+  await describe(found, claudeAuth(keys), () => undefined);
+  if (gen !== generation) return have;
+  mergePool(found);
+  state.mapVideos[id] = { at: now, ids: found.map((v) => v.id) };
+  persist();
+  const shown = found.filter((v) => eligible(v, ctx()));
+  return [...new Map([...have, ...shown].map((v) => [v.id, v])).values()].slice(0, 12);
 }
