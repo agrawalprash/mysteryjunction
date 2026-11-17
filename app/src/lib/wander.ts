@@ -1039,7 +1039,7 @@ export interface PlaceVideos {
 
 const PLACE_CACHE = 7 * DAY;
 /** Bumped when the way pages pick videos changes, so pages saved by older versions fill again. */
-const PLACE_ALGO = 2;
+const PLACE_ALGO = 3;
 /** Map pages stop searching this far before the daily limit, so sets and top-ups always have room. */
 const PLACE_RESERVE = 2500;
 const PLACES_KEPT = 40;

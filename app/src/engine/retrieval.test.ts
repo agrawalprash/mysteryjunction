@@ -36,3 +36,11 @@ test('matchPool no longer matches on filler words like "the" and "and"', () => {
   const out = matchPool([v('a', 'The best of the cooking show'), v('b', 'Pyramids of Giza explained')], ctx, 'The Pyramids and the Nile');
   assert.deepEqual(out.map((x) => x.id), ['b']);
 });
+
+test('quality: a well-liked 2M-view video beats a 10K-view one with a slightly better like ratio', async () => {
+  const { quality } = await import('./feed.ts');
+  const v = (views: number, likes: number) => ({ id: 'x', title: '', channelId: '', channelTitle: '', publishedAt: '', durationSec: 600, views, likes, comments: views * 0.001, thumb: '' });
+  assert.ok(quality(v(2_000_000, 70_000)) > quality(v(10_000, 500)));
+  // ...but a badly received popular video doesn't automatically win.
+  assert.ok(quality(v(2_000_000, 4_000)) < quality(v(200_000, 9_000)));
+});

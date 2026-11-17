@@ -21,12 +21,20 @@ export function likeRatio(v: Video): number {
   return v.views > 0 ? v.likes / v.views : 0;
 }
 
-/** Rough "is this worth someone's time" score from public engagement numbers. */
+/**
+ * Rough "is this worth someone's time" score from public numbers:
+ *  - engagement (likes and comments per view), shrunk toward typical values for small videos,
+ *    whose few viewers are mostly fans and make the ratios look better than they are
+ *  - reach: how many people chose to watch it (1K views counts little, 1M+ a lot)
+ */
 export function quality(v: Video): number {
   const views = Math.max(v.views, 1);
-  const lr = v.likes / views; // typical: 0.01–0.06
-  const cr = v.comments / views;
-  let q = 0.5 + Math.min(lr / 0.04, 1.5) * 0.6 + Math.min(cr / 0.003, 1) * 0.2;
+  const K = 3000; // views before a video's own ratios are trusted over the typical ones
+  const lr = (v.likes + 0.03 * K) / (views + K); // typical: 0.01–0.06
+  const cr = (v.comments + 0.002 * K) / (views + K);
+  const engagement = 0.5 + Math.min(lr / 0.04, 1.5) * 0.6 + Math.min(cr / 0.003, 1) * 0.2;
+  const reach = Math.min(1, Math.max(0, (Math.log10(views) - 3) / 4)); // 1K -> 0, 10M -> 1
+  let q = engagement * (0.6 + 0.8 * reach);
   if (v.views < 300) q *= 0.5; // too unproven to recommend blind
   return q;
 }

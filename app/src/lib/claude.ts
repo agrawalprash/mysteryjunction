@@ -118,7 +118,7 @@ Principles:
 - The viewer's own instructions win: always follow their standing rules, always cover some of their pinned long-term interests in core, and fill each of their custom rows with directions that fit its brief.
 - When the viewer asked for something right now (focus), the focus directions are the heart of this set: still personalised to their taste, varied within the request, with one or two surprising takes. Other tiers stay as usual but may lean toward it where natural.
 - Write every query, topic and "because" in the viewer's language.
-- YouTube searches are expensive for the app (strict daily quota); reading a channel's uploads is nearly free. So for most directions also name 1–3 channels you are confident exist and that make great videos on that subject; favour lesser-known excellent channels over the biggest names, and vary them between directions. The app falls back to the search query if a channel isn't found. For wildcards, name channels only when you're sure; a search finds new creators better.`;
+- YouTube searches are expensive for the app (strict daily quota); reading a channel's uploads is nearly free. So for most directions also name 1–3 channels you are confident exist and that make great videos on that subject; mostly name well-established channels with large audiences and a reputation for quality, plus an occasional lesser-known gem, and vary them between directions. The app falls back to the search query if a channel isn't found. For wildcards, name channels only when you're sure; a search finds new creators better.`;
 
 function describeViewer(input: PlannerInput): string {
   const lines: string[] = [];
@@ -620,7 +620,7 @@ const MapPlace = z.object({
   concepts: z.array(z.string()).describe('2–5 lowercase concept tags for it (like "roman engineering", "water").'),
   channels: z
     .array(z.string())
-    .describe('2–3 real YouTube channel handles (like "@veritasium") that regularly post good videos about exactly this place. Empty if unsure.'),
+    .describe('2–3 real, well-established YouTube channel handles (like "@veritasium") with large audiences and a reputation for quality, that regularly post about exactly this place. Empty if unsure.'),
 });
 const MapLevel = z.object({
   children: z.array(MapPlace).describe('The places inside, 6–12, together covering this place well, from best-known to less obvious.'),
@@ -665,7 +665,7 @@ const Route = z.object({
       path: z.array(z.string()).describe('Full path from a top-level area to the place, ending with its own name, e.g. ["Nature", "Landforms", "Mountains"]. Reuse existing names exactly.'),
       desc: z.string().describe('One line, under 10 words.'),
       query: z.string().describe("A YouTube search query that finds good videos about it. It must contain the place's own name (what the viewer asked for)."),
-      channels: z.array(z.string()).describe('2–3 real YouTube channel handles that regularly post good videos about exactly this. Empty if unsure.'),
+      channels: z.array(z.string()).describe('2–3 real, well-established YouTube channel handles with large audiences and a reputation for quality, that regularly post about exactly this. Empty if unsure.'),
       concepts: z.array(z.string()).describe('2–5 lowercase concept tags.'),
     })
     .describe('For place: where it lives on the map. For others: any values (ignored).'),
@@ -717,7 +717,7 @@ export async function placeChannels(auth: ClaudeAuth, path: string[]): Promise<s
     max_tokens: 2000,
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(PlaceChannels) },
-    system: forProfile('Name YouTube channels that regularly post good videos about exactly the given topic. Only real channels you are confident exist, as @handles.'),
+    system: forProfile('Name well-established YouTube channels with large audiences and a reputation for quality that regularly post about exactly the given topic. Only real channels you are confident exist, as @handles.'),
     messages: [{ role: 'user', content: `Topic: ${path.join(' › ')}` }],
   });
   return res.parsed_output?.channels ?? [];
