@@ -35,6 +35,8 @@ export interface Facets {
   concepts?: string[];
   /** Claude's judgement: clearly suitable for a young child (about 5–8). */
   kidSafe?: boolean;
+  /** How well it fits the topic it was fetched for: 2 clearly, 1 partly, 0 not. */
+  fits?: 0 | 1 | 2;
 }
 
 /** A video plus where it came from, so we can learn from what happens to it. */

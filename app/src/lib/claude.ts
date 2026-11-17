@@ -249,6 +249,12 @@ export async function planSurprise(auth: ClaudeAuth, input: PlannerInput): Promi
 
 const Tag = z.object({
   i: z.number().describe('The index of the video in the list.'),
+  fits: z
+    .number()
+    .int()
+    .min(0)
+    .max(2)
+    .describe('How well the video fits the "wanted" topic given for it: 2 clearly about it, 1 partly or loosely, 0 not about it.'),
   subject: z.string().describe('What it is about, 2–5 words, more specific than the search topic.'),
   format: z.enum(FORMATS),
   pace: z.enum(['calm', 'moderate', 'energetic']),
@@ -282,7 +288,7 @@ export async function describeVideos(auth: ClaudeAuth, videos: Candidate[], voca
         .map((v, i) => {
           const mins = Math.round(v.durationSec / 60);
           const desc = (v.description ?? '').replace(/\s+/g, ' ').slice(0, 220);
-          return `${i}. "${v.title}" | channel: ${v.channelTitle} | ${mins} min | ${desc}`;
+          return `${i}. "${v.title}" | channel: ${v.channelTitle} | ${mins} min | wanted: ${v.topic} | ${desc}`;
         })
         .join('\n');
       try {
@@ -308,6 +314,7 @@ export async function describeVideos(auth: ClaudeAuth, videos: Candidate[], voca
               pace: t.pace,
               depth: t.depth,
               clickbait: t.clickbait,
+              fits: Math.max(0, Math.min(2, Math.round(t.fits))) as 0 | 1 | 2,
               kidSafe: t.kid_safe,
               concepts: [...new Set(t.concepts.map((c) => c.trim().toLowerCase()).filter(Boolean))].slice(0, 8),
             };
@@ -714,4 +721,55 @@ export async function placeChannels(auth: ClaudeAuth, path: string[]): Promise<s
     messages: [{ role: 'user', content: `Topic: ${path.join(' › ')}` }],
   });
   return res.parsed_output?.channels ?? [];
+}
+
+// ---------------------------------------------------------------- does this video belong to this place? (fast)
+
+const PlaceJudgement = z.object({
+  grades: z.array(
+    z.object({
+      i: z.number().int().describe('The index of the video in the list.'),
+      grade: z.number().int().min(0).max(2).describe('2: clearly about this place. 1: partly or loosely. 0: not about it.'),
+      child: z.string().describe('If grade > 0: the one listed sub-place it fits best, exactly as written; empty if none fits.'),
+    }),
+  ),
+});
+
+export interface JudgeVideo {
+  title: string;
+  channel: string;
+}
+
+/**
+ * Grade a list of videos against one place on Explore's map (Claude Haiku: titles only, fast).
+ * Also sorts the good ones into the place's sub-places, so those can open without a new fetch.
+ */
+export async function judgePlace(
+  auth: ClaudeAuth,
+  path: string[],
+  children: string[],
+  videos: JudgeVideo[],
+): Promise<{ i: number; grade: 0 | 1 | 2; child: string }[]> {
+  if (!videos.length) return [];
+  const res = await client(auth).beta.messages.parse({
+    model: FAST_MODEL,
+    max_tokens: 16000,
+    ...FALLBACK,
+    output_config: { effort: 'low', format: betaZodOutputFormat(PlaceJudgement) },
+    system: forProfile(
+      'You check which YouTube videos belong on one page of a map of topics. Judge from the title and channel. Be strict: grade 2 only when the video is clearly about this exact place, not just the wider area or a neighbouring topic. Grade every video once.',
+    ),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          `Place: ${path.join(' › ')}`,
+          `Sub-places: ${children.join(' | ') || 'none'}`,
+          '',
+          ...videos.map((v, i) => `${i}. "${v.title}" (${v.channel})`),
+        ].join('\n'),
+      },
+    ],
+  });
+  return (res.parsed_output?.grades ?? []).map((g) => ({ i: g.i, grade: Math.max(0, Math.min(2, g.grade)) as 0 | 1 | 2, child: g.child.trim() }));
 }

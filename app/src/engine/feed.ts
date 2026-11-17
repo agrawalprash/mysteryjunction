@@ -118,6 +118,8 @@ export function eligible(c: Candidate, ctx: FeedContext, shorts = false): boolea
   if (ctx.watchedIds.has(c.id)) return false;
   if (ctx.mutedChannels.has(c.channelId)) return false;
   if (ctx.kidCheck && c.facets?.kidSafe !== true) return false;
+  // Claude said it isn't about the topic it was fetched for (channel picks are by channel, not topic).
+  if (c.facets?.fits === 0 && c.tier !== 'channel') return false;
   if (shorts) return c.durationSec > 0 && c.durationSec <= SHORT_MAX_SEC;
   return c.durationSec >= MAIN_MIN_SEC && c.durationSec <= MAIN_MAX_SEC;
 }
