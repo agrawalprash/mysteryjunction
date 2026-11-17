@@ -13,6 +13,8 @@ import { activeProfile } from './profiles.ts';
 export const MODEL = 'claude-opus-5-5';
 /** For quick list-making where speed matters more than judgement (drawing Explore's map). */
 export const FAST_MODEL = 'claude-haiku-5-5';
+/** Quick calls give up fast instead of waiting out rate limits; callers fall back to something simpler. */
+const QUICK = { timeout: 15_000, maxRetries: 0 };
 
 /** Extra instructions for a profile with the playful (kid) option on. */
 const PLAYFUL = `
@@ -46,6 +48,9 @@ export function client(auth: ClaudeAuth) {
   return new Anthropic({
     apiKey: auth.apiKey,
     dangerouslyAllowBrowser: true,
+    // Never wait minutes: the default is 10 minutes per request.
+    timeout: 90_000,
+    maxRetries: 2,
     defaultHeaders: auth.workspaceId ? { 'anthropic-workspace-id': auth.workspaceId } : undefined,
   });
 }
@@ -647,7 +652,7 @@ export async function mapChildren(auth: ClaudeAuth, path: string[], areas: strin
       }`,
     ),
     messages: [{ role: 'user', content: top ? 'Place: the whole map (draw the top-level areas)' : `Place: ${path.join(' › ')}` }],
-  });
+  }, QUICK);
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error('Claude couldn’t draw this part of the map.');
   return res.parsed_output;
 }
@@ -689,7 +694,7 @@ export async function routeAsk(auth: ClaudeAuth, input: RouteInput): Promise<Rou
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(Route) },
     system: forProfile(
-      `You route what a viewer says to Wander, a YouTube app with a map of everything worth watching (a tree of places, like library sections). Most requests are places to explore. For a place, put it in its natural home on the map, not simply inside wherever the viewer is now, unless it truly belongs there. If one of the existing similar places is the same thing, return its path exactly instead of making a new one. Expect voice transcription slips.`,
+      `You route what a viewer says to Wander, a YouTube app with a map of everything worth watching (a tree of places, like library sections). Most requests are places to explore.\nFirst work out what they mean, using where they are: a short or ambiguous request takes its meaning from the current place ("bollywood" while in Music means Bollywood music; "bollywood" while in Film means Bollywood films; "jaguar" in Animals is the cat, in Cars the car).\nThen put that meaning in its natural home on the map; usually that is inside or next to where they are, because that's what the request was about. If one of the existing similar places is the same thing, return its path exactly instead of making a new one. Expect voice transcription slips.`,
     ),
     messages: [
       {
@@ -702,7 +707,7 @@ export async function routeAsk(auth: ClaudeAuth, input: RouteInput): Promise<Rou
         ].join('\n'),
       },
     ],
-  });
+  }, QUICK);
   if (res.stop_reason === 'refusal' || !res.parsed_output) throw new Error(`Couldn’t route that (${res.stop_reason ?? 'no answer'}).`);
   return res.parsed_output;
 }
@@ -719,20 +724,18 @@ export async function placeChannels(auth: ClaudeAuth, path: string[]): Promise<s
     output_config: { effort: 'low', format: betaZodOutputFormat(PlaceChannels) },
     system: forProfile('Name well-established YouTube channels with large audiences and a reputation for quality that regularly post about exactly the given topic. Only real channels you are confident exist, as @handles.'),
     messages: [{ role: 'user', content: `Topic: ${path.join(' › ')}` }],
-  });
+  }, QUICK);
   return res.parsed_output?.channels ?? [];
 }
 
 // ---------------------------------------------------------------- does this video belong to this place? (fast)
 
 const PlaceJudgement = z.object({
-  grades: z.array(
-    z.object({
-      i: z.number().int().describe('The index of the video in the list.'),
-      grade: z.number().int().min(0).max(2).describe('2: clearly about this place. 1: partly or loosely. 0: not about it.'),
-      child: z.string().describe('If grade > 0: the one listed sub-place it fits best, exactly as written; empty if none fits.'),
-    }),
-  ),
+  clear: z.array(z.number().int()).describe('Indexes of videos clearly about this exact place.'),
+  partly: z.array(z.number().int()).describe('Indexes of videos partly or loosely about it.'),
+  sub_places: z
+    .array(z.object({ name: z.string().describe('A listed sub-place, exactly as written.'), videos: z.array(z.number().int()) }))
+    .describe('For listed sub-places only: which of the clear or partly videos fit each one best. Leave out sub-places with none.'),
 });
 
 export interface JudgeVideo {
@@ -757,7 +760,7 @@ export async function judgePlace(
     ...FALLBACK,
     output_config: { effort: 'low', format: betaZodOutputFormat(PlaceJudgement) },
     system: forProfile(
-      'You check which YouTube videos belong on one page of a map of topics. Judge from the title and channel. Be strict: grade 2 only when the video is clearly about this exact place, not just the wider area or a neighbouring topic. Grade every video once.',
+      'You check which YouTube videos belong on one page of a map of topics. Judge from the title and channel. Be strict: "clear" only when the video is clearly about this exact place, not just the wider area or a neighbouring topic. Videos in neither list are not about it.',
     ),
     messages: [
       {
@@ -770,6 +773,13 @@ export async function judgePlace(
         ].join('\n'),
       },
     ],
-  });
-  return (res.parsed_output?.grades ?? []).map((g) => ({ i: g.i, grade: Math.max(0, Math.min(2, g.grade)) as 0 | 1 | 2, child: g.child.trim() }));
+  }, QUICK);
+  const out = res.parsed_output;
+  if (!out) return [];
+  const childOf = new Map<number, string>();
+  for (const sp of out.sub_places) for (const i of sp.videos) childOf.set(i, sp.name.trim());
+  const grades: { i: number; grade: 0 | 1 | 2; child: string }[] = [];
+  for (const i of out.clear) grades.push({ i, grade: 2, child: childOf.get(i) ?? '' });
+  for (const i of out.partly) if (!out.clear.includes(i)) grades.push({ i, grade: 1, child: childOf.get(i) ?? '' });
+  return grades;
 }

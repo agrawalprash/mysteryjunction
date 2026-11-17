@@ -248,19 +248,20 @@ export function MapPage({
   const place: MapPlace = findPlace(path);
   const [level, setLevel] = useState<MapLevel | null>(savedLevel(path));
   const [levelError, setLevelError] = useState('');
+  const drawLevel = () => {
+    const auth = claudeAuth(keys);
+    setLevelError('');
+    if (!auth) return setLevelError('Drawing the map needs an Anthropic key.');
+    levelOf(auth, path)
+      .then(setLevel)
+      .catch(() => setLevelError('Claude didn’t answer in time.'));
+  };
   const [videos, setVideos] = useState<Candidate[] | null>(null);
   const [videoNote, setVideoNote] = useState('');
 
   useEffect(() => {
     visitPlace(path);
-    const auth = claudeAuth(keys);
-    if (!level) {
-      if (!auth) setLevelError('Drawing the map needs an Anthropic key.');
-      else
-        levelOf(auth, path)
-          .then(setLevel)
-          .catch((e) => setLevelError(e instanceof Error ? e.message : String(e)));
-    }
+    if (!level) drawLevel();
     placeVideos(keys, place, setVideoNote)
       .then((r) => {
         setVideos(r.videos);
@@ -349,7 +350,14 @@ export function MapPage({
               <div className="spinner small-spinner" /> Claude is drawing this part of the map…
             </div>
           )}
-          {levelError && <p className="small error-text">{levelError}</p>}
+          {levelError && (
+            <p className="small error-text">
+              {levelError}{' '}
+              <button className="chip" onClick={drawLevel}>
+                Try again
+              </button>
+            </p>
+          )}
           {level && (
             <div className="place-grid">
               {level.children.map((c) => (
