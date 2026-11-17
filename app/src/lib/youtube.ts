@@ -3,6 +3,7 @@
 
 import type { Candidate, Direction, Video } from '../engine/types.ts';
 import { load, localDate, save } from './store.ts';
+import { lexicalFirst, titleMentions, topicWords } from '../engine/retrieval.ts';
 import { activeProfile } from './profiles.ts';
 
 const API = 'https://www.googleapis.com/youtube/v3';
@@ -116,7 +117,7 @@ async function searchIdsUncached(q: string, key: string, opts: SearchOptions): P
       type: 'video',
       q,
       // Same price for 50 results as for 5: take plenty, leftovers feed later sets.
-      maxResults: opts.maxResults ?? 40,
+      maxResults: opts.maxResults ?? 50,
       videoEmbeddable: 'true',
       safeSearch: opts.safeSearch ?? 'moderate',
       videoDuration: opts.duration ?? 'any',
@@ -190,18 +191,24 @@ function sample<T>(items: T[], n: number): T[] {
   return a.slice(0, n);
 }
 
-/** Video IDs from the channels Claude named (a few units instead of a 100-unit search). */
-async function idsFromChannels(handles: string[], key: string): Promise<string[]> {
-  const ids: string[] = [];
+/**
+ * Videos from the channels Claude named for a direction (a few units instead of a 100-unit search):
+ * their recent uploads, preferring titles that mention the topic (the rest of a channel's uploads
+ * are often about something else).
+ */
+async function videosFromChannels(handles: string[], key: string, words: string[], perChannel = 10): Promise<Video[]> {
+  const out: Video[] = [];
   for (const h of handles.slice(0, 3)) {
     try {
       const playlist = await uploadsPlaylist(h, key);
-      if (playlist) ids.push(...sample(await recentUploads(playlist, key), 10));
+      if (!playlist) continue;
+      const details = await videoDetails(await recentUploads(playlist, key), key);
+      out.push(...lexicalFirst(details, words, perChannel));
     } catch (e) {
       if (e instanceof YouTubeError && e.status === 403) throw e; // quota/key problems: stop
     }
   }
-  return ids;
+  return out;
 }
 
 /** Run one planner direction: channels first (cheap), search to fill in; then details and provenance. */
@@ -219,9 +226,14 @@ export async function fetchDirection(d: Direction, key: string, language?: strin
     opts.duration = r < 0.45 ? 'medium' : r < 0.8 ? 'long' : 'any';
   }
   // Archive needs a date filter, which only search has.
-  const ids = d.channels?.length && d.tier !== 'archive' ? await idsFromChannels(d.channels, key) : [];
-  if (ids.length < 6) ids.push(...(await searchIds(d.query, key, opts)));
-  const videos = await videoDetails([...new Set(ids)], key);
+  const words = topicWords([d.topic, d.query]);
+  let videos = d.channels?.length && d.tier !== 'archive' ? await videosFromChannels(d.channels, key, words) : [];
+  // Few, or few that are actually about the topic: search too.
+  if (videos.length < 6 || videos.filter((v) => titleMentions(v.title, words)).length < 3) {
+    const have = new Set(videos.map((v) => v.id));
+    const ids = (await searchIds(d.query, key, opts)).filter((x) => !have.has(x));
+    videos = [...videos, ...(await videoDetails(ids, key))];
+  }
   const now = Date.now();
   return videos.map((v) => ({ ...v, topic: d.topic, tier: d.tier, because: d.because, query: d.query, fetchedAt: now, rowId: d.rowId }));
 }

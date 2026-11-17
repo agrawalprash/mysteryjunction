@@ -21,13 +21,14 @@ import {
 } from '../engine/profile.ts';
 import { assembleFeed, assembleSurprise, eligible, makeScorer, relatedFromPool, type FeedContext } from '../engine/feed.ts';
 import { addConceptSignal, conceptAffinity, conceptsOf, features, initialWeights, topConcepts, update, FEATURES, type Weights } from '../engine/learn.ts';
+import { ENOUGH_CANDIDATES, ENOUGH_CLEAR, pickForPage, titleMentions, topicWords } from '../engine/retrieval.ts';
 import { canMakeSet, matchPool, needsRefill, poolHealth, POOL_SIZE, trimPool } from '../engine/pool.ts';
 import { SHORTS_TOPICS, WILDCARD_TOPICS, sampleWithout } from '../engine/fallbackTopics.ts';
 import { load, localDate, remove, save } from './store.ts';
 import { AUTO_BUDGET, channelUploads, fetchDirection, uploadsFromHandles, quotaUsed, searchIds, SET_COST, videoDetails, YouTubeError } from './youtube.ts';
-import { askWander, describeVideos, explainPicks, placeChannels, planDay, planSurprise, routeAsk, writeTasteProfile, type ClaudeAuth, type PlannerInput } from './claude.ts';
+import { askWander, describeVideos, explainPicks, judgePlace, placeChannels, planDay, planSurprise, routeAsk, writeTasteProfile, type ClaudeAuth, type PlannerInput } from './claude.ts';
 import { claudeAuth, type ApiKeys } from './keys.ts';
-import { addPlace, pathId, setPlaceChannels, similarPlaces, topAreas, type MapPlace } from './map.ts';
+import { addPlace, pathId, savedLevel, setPlaceChannels, similarPlaces, topAreas, type MapPlace } from './map.ts';
 import { getSettings } from './settings.ts';
 import { timeStatus, type TimeStatus } from './screenTime.ts';
 import { activeProfile, deleteProfile, listProfiles, setActiveProfileId, stateKey, type WanderProfile } from './profiles.ts';
@@ -70,7 +71,9 @@ interface State {
   mapVisits: Record<string, { path: string[]; at: number }>;
   mapWatch: Record<string, number>;
   /** Each place's own YouTube search results, kept for a week (newest places last). */
-  mapVideos: Record<string, { at: number; videos?: Candidate[]; ids?: string[] }>;
+  mapVideos: Record<string, { at: number; videos?: Candidate[]; ids?: string[]; algo?: number }>;
+  /** Candidates handed down to a place by its parent's grading (video ids, in the pool). */
+  mapInbox: Record<string, string[]>;
 }
 
 function fresh(): State {
@@ -100,6 +103,7 @@ function fresh(): State {
     mapVisits: {},
     mapWatch: {},
     mapVideos: {},
+    mapInbox: {},
   };
 }
 
@@ -1034,101 +1038,161 @@ export interface PlaceVideos {
 }
 
 const PLACE_CACHE = 7 * DAY;
+/** Bumped when the way pages pick videos changes, so pages saved by older versions fill again. */
+const PLACE_ALGO = 2;
 /** Map pages stop searching this far before the daily limit, so sets and top-ups always have room. */
 const PLACE_RESERVE = 2500;
 const PLACES_KEPT = 40;
 
-/** A place's videos: one YouTube search for that place (kept for a week), filtered and ordered for this profile. */
-export async function placeVideos(keys: ApiKeys, place: MapPlace, onProgress: (m: string) => void = () => undefined): Promise<PlaceVideos> {
+/**
+ * A place's videos (see engine/retrieval.ts for the design and tools/retrieval-sim.mjs for how it was chosen):
+ *   1. candidates handed down from the parent page, plus the place's channels' uploads when few (~1 unit each)
+ *   2. one fast Claude grade of all of them against this place (which also hands good ones down to sub-places)
+ *   3. a 100-unit search only if fewer than ENOUGH_CLEAR are clearly about it
+ *   4. clear matches shown, partial ones only to fill a page that would look empty
+ * `warm`: no YouTube calls at all (used to prepare sub-places in the background).
+ */
+export async function placeVideos(
+  keys: ApiKeys,
+  place: MapPlace,
+  onProgress: (m: string) => void = () => undefined,
+  warm = false,
+): Promise<PlaceVideos> {
   const id = pathId(place.path);
-  const show = (list: Candidate[]) => {
-    const c = ctx();
-    const score = makeScorer({ ...c, rng: () => 0.5 });
-    // Keep YouTube's relevance order mostly, nudged by quality and this profile's leanings.
-    return list
-      .filter((v) => eligible(v, c))
-      .map((v, i) => ({ v, s: score(v) / (1 + i * 0.08) }))
-      .sort((a, b) => b.s - a.s)
-      .slice(0, 18)
-      .map((x) => x.v);
-  };
   const cached = state.mapVideos[id];
-  if (cached?.videos && Date.now() - cached.at < PLACE_CACHE) return { videos: show(cached.videos) };
+  if (cached?.videos && cached.algo === PLACE_ALGO && Date.now() - cached.at < PLACE_CACHE) return { videos: cached.videos.filter((v) => eligible(v, ctx())) };
 
-  const fromPoolOnly = (): PlaceVideos => {
-    const fromPool = matchPool(state.pool, ctx(), `${place.name} ${place.desc}`, place.concepts, 18).filter((v) => v.tier !== 'shorts');
-    return { videos: fromPool, note: `YouTube’s daily limit is used up, so these are from videos already here. Fresh ones after ${quotaResetTime()}.` };
-  };
-  // Channel reads cost a few units; searches 100 and stop well before the limit.
-  const canSearch = () => quotaUsed() + 101 <= AUTO_BUDGET - PLACE_RESERVE;
-  if (quotaUsed() + 15 > AUTO_BUDGET) {
-    const fromPool = matchPool(state.pool, ctx(), `${place.name} ${place.desc}`, place.concepts, 18).filter((v) => v.tier !== 'shorts');
-    return { videos: fromPool, note: 'YouTube’s daily limit is used up, so these are from videos you already have. Fresh ones tomorrow.' };
-  }
-
+  const auth = claudeAuth(keys);
   const now = Date.now();
   const gen = generation;
-  const auth = claudeAuth(keys);
+  // Before Claude's kid check (which needs a description), judge on everything else.
+  const usable = (v: Candidate) => v.tier !== 'shorts' && eligible(v, { ...ctx(), kidCheck: false });
+  const words = topicWords([place.name, ...place.concepts]);
+  const subPlaces = savedLevel(place.path)?.children.map((c) => c.name) ?? [];
+  const clear = new Map<string, Candidate>();
+  const partial = new Map<string, Candidate>();
+  const graded = new Set<string>();
 
-  // Cheap first: recent uploads from channels that cover this place (a few units), kept if they match it.
-  let channels = place.channels;
-  if (!channels && auth) {
-    channels = await placeChannels(auth, place.path).catch(() => []);
-    setPlaceChannels(place.path, channels);
-  }
-  let details: Video[] = [];
-  if (channels?.length) {
-    onProgress('Looking through channels for this place…');
-    const words = [...new Set([place.name, ...place.concepts].flatMap((w) => w.toLowerCase().split(/[^\p{L}\p{N}]+/u)).filter((w) => w.length > 3))];
-    const uploads = await uploadsFromHandles(channels, keys.youtube).catch(() => [] as Video[]);
-    details = uploads.filter((v) => {
-      const hay = `${v.title} ${v.description ?? ''}`.toLowerCase();
-      return words.some((w) => hay.includes(w));
-    });
-  }
-  // Too few: one search (100 units), if there's room for it today.
-  if (details.length < 8 && !canSearch() && details.length === 0) return fromPoolOnly();
-  if (details.length < 8 && canSearch()) {
-    onProgress('Searching YouTube for this place…');
-    const ids = await searchIds(place.query, keys.youtube, { maxResults: 30, language: getSettings().language });
-    const have = new Set(details.map((v) => v.id));
-    details = [...details, ...(await videoDetails(ids.filter((x) => !have.has(x)), keys.youtube))];
-  }
-  const found: Candidate[] = details.map((v) => ({
-    ...v,
-    topic: place.name,
-    tier: 'search' as const,
-    because: `On the map: ${place.path.join(' › ')}`,
-    query: place.query,
-    fetchedAt: now,
-  }));
-  const keep = () => {
-    mergePool(found);
-    // Kept without descriptions, to stay small.
-    state.mapVideos[id] = { at: now, videos: found.map((v) => ({ ...v, description: undefined })) };
+  const asCandidates = (vs: Video[], source: string): Candidate[] =>
+    vs.map((v) => ({ ...v, topic: place.name, tier: 'search' as const, because: `On the map: ${place.path.join(' › ')}`, query: source, fetchedAt: now }));
+
+  const judge = async (vids: Candidate[]) => {
+    const todo = [...new Map(vids.filter((v) => usable(v) && !graded.has(v.id)).map((v) => [v.id, v])).values()];
+    todo.forEach((v) => graded.add(v.id));
+    if (!todo.length) return;
+    if (!auth) {
+      for (const v of todo) (titleMentions(v.title, words) ? clear : partial).set(v.id, v);
+      return;
+    }
+    const grades = await judgePlace(
+      auth,
+      place.path,
+      subPlaces,
+      todo.map((v) => ({ title: v.title, channel: v.channelTitle })),
+    ).catch(() => null);
+    if (!grades) {
+      // Claude unavailable: fall back to the title check.
+      for (const v of todo) (titleMentions(v.title, words) ? clear : partial).set(v.id, v);
+      return;
+    }
+    for (const g of grades) {
+      const v = todo[g.i];
+      if (!v) continue;
+      if (g.grade === 2) clear.set(v.id, v);
+      else if (g.grade === 1) partial.set(v.id, v);
+      // Hand good candidates down to the sub-place they fit, so it can open without fetching.
+      const child = g.grade > 0 && g.child ? subPlaces.find((n) => n.toLowerCase() === g.child.toLowerCase()) : undefined;
+      if (child) {
+        const cid = pathId([...place.path, child]);
+        state.mapInbox[cid] = [...new Set([...(state.mapInbox[cid] ?? []), v.id])].slice(-60);
+      }
+    }
   };
+
+  // 1. Handed-down candidates, plus the place's channels when there are few.
+  const byId = new Map(state.pool.map((v) => [v.id, v]));
+  const candidates = (state.mapInbox[id] ?? []).map((x) => byId.get(x)).filter((v): v is Candidate => !!v);
+  if (candidates.filter(usable).length < ENOUGH_CANDIDATES && !warm && quotaUsed() + 15 <= AUTO_BUDGET) {
+    let channels = place.channels;
+    if (!channels && auth) {
+      channels = await placeChannels(auth, place.path).catch(() => []);
+      setPlaceChannels(place.path, channels);
+    }
+    if (channels?.length) {
+      onProgress('Looking through channels for this place…');
+      const uploads = asCandidates(await uploadsFromHandles(channels, keys.youtube).catch(() => [] as Video[]), `channels: ${channels.join(', ')}`);
+      mergePool(uploads);
+      candidates.push(...uploads);
+    }
+  }
+  // 2. One grade of everything against this place.
+  if (candidates.length) {
+    onProgress('Picking the ones that fit…');
+    await judge(candidates);
+  }
+  // 3. Search only when too few are clearly about it.
+  const canSearch = quotaUsed() + 101 <= AUTO_BUDGET - PLACE_RESERVE;
+  if (!warm && clear.size < ENOUGH_CLEAR && canSearch) {
+    onProgress('Searching YouTube for this place…');
+    const ids = await searchIds(place.query, keys.youtube, { maxResults: 50, language: getSettings().language });
+    const found = asCandidates(await videoDetails(ids.filter((x) => !graded.has(x)), keys.youtube), place.query);
+    mergePool(found);
+    await judge(found);
+  }
+  if (gen !== generation) return { videos: [] };
+  if (!warm && !clear.size && !partial.size && !canSearch) return fromPoolFor(place);
+
+  // 4. Clear matches (best for this profile first), partial ones only to fill.
+  const score = makeScorer({ ...ctx(), rng: () => 0.5 });
+  const order = (m: Map<string, Candidate>) => [...m.values()].map((v, i) => ({ v, s: score(v) / (1 + i * 0.04) })).sort((a, b) => b.s - a.s).map((x) => x.v);
+  let shown = pickForPage(order(clear), order(partial), 24);
   if (activeProfile().options.contentCheck) {
-    // Kid profiles: Claude checks every video before any is shown (small batches, in parallel).
+    // Kid profiles: Claude's kid check on what would be shown (a few extra, in case some fail).
     onProgress('Checking the videos…');
-    await describe(found, auth, () => undefined, found.length, 8);
+    await describe(shown, auth, () => undefined, shown.length, 8);
     if (gen !== generation) return { videos: [] };
   } else {
-    // Show them now; Claude describes them in the background for learning.
-    void describe(found, auth, () => undefined, found.length, 10)
+    // Described in the background, for learning and "why" lines.
+    void describe(shown, auth, () => undefined, shown.length, 10)
       .then(() => {
-        if (gen !== generation) return;
-        keep();
-        persist();
+        if (gen === generation) persist();
       })
       .catch(() => undefined);
   }
-  keep();
-  const keys_ = Object.keys(state.mapVideos);
-  if (keys_.length > PLACES_KEPT) {
-    for (const k of keys_.sort((a, b) => state.mapVideos[a].at - state.mapVideos[b].at).slice(0, keys_.length - PLACES_KEPT)) delete state.mapVideos[k];
+  shown = shown.filter((v) => eligible(v, ctx())).slice(0, 18);
+  if (warm && shown.length < 8) return { videos: shown };
+  state.mapVideos[id] = { at: now, algo: PLACE_ALGO, videos: shown.map((v) => ({ ...v, description: undefined })) };
+  const kept = Object.keys(state.mapVideos);
+  if (kept.length > PLACES_KEPT) {
+    for (const k of kept.sort((a, b) => state.mapVideos[a].at - state.mapVideos[b].at).slice(0, kept.length - PLACES_KEPT)) delete state.mapVideos[k];
   }
+  const inbox = Object.keys(state.mapInbox);
+  if (inbox.length > PLACES_KEPT * 2) for (const k of inbox.slice(0, inbox.length - PLACES_KEPT * 2)) delete state.mapInbox[k];
   persist();
-  return { videos: show(found) };
+  return { videos: shown };
+}
+
+/** When YouTube's limit is used up: matching videos already on the device. */
+function fromPoolFor(place: MapPlace): PlaceVideos {
+  const fromPool = matchPool(state.pool, ctx(), place.name, place.concepts, 18).filter((v) => v.tier !== 'shorts');
+  return { videos: fromPool, note: `YouTube’s daily limit is used up, so these are from videos already here. Fresh ones after ${quotaResetTime()}.` };
+}
+
+/** Prepare a page's sub-places in the background from what was handed down (no YouTube calls), so they open instantly. */
+let warming = false;
+export async function warmSubPlaces(keys: ApiKeys, place: MapPlace) {
+  if (warming || !claudeAuth(keys)) return;
+  warming = true;
+  try {
+    for (const child of (savedLevel(place.path)?.children ?? []).slice(0, 8)) {
+      const cid = pathId(child.path);
+      const fresh = state.mapVideos[cid]?.algo === PLACE_ALGO && Date.now() - state.mapVideos[cid].at < PLACE_CACHE;
+      if (fresh || (state.mapInbox[cid]?.length ?? 0) < ENOUGH_CLEAR) continue;
+      await placeVideos(keys, child, () => undefined, true).catch(() => undefined);
+    }
+  } finally {
+    warming = false;
+  }
 }
 
 // ---------------------------------------------------------------- channels you like

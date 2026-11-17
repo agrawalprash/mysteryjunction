@@ -7,6 +7,7 @@ import {
   placeMark,
   placesVisitedIn,
   placeVideos,
+  warmSubPlaces,
   recentPlaces,
   visitPlace,
   type ExploreResult,
@@ -264,6 +265,8 @@ export function MapPage({
       .then((r) => {
         setVideos(r.videos);
         setVideoNote(r.note ?? '');
+        // Prepare the places inside from what this page handed down, so they open instantly.
+        void warmSubPlaces(keys, place);
       })
       .catch((e) => {
         setVideos([]);

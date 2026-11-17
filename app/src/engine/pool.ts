@@ -1,6 +1,7 @@
 // The candidate pool: a fixed number of videos kept on the device, refilled in the
 // background and trimmed by value, so sets can be made instantly with no API calls.
 
+import { topicWords } from './retrieval.ts';
 import type { Candidate } from './types.ts';
 import { eligible, quality, type FeedContext } from './feed.ts';
 
@@ -62,10 +63,7 @@ export function needsRefill(h: PoolHealth): boolean {
 
 /** Pool videos matching words or concepts (for instant search and Ask focus). */
 export function matchPool(pool: Candidate[], ctx: FeedContext, text: string, concepts: string[] = [], limit = 30): Candidate[] {
-  const words = text
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((w) => w.length > 2);
+  const words = topicWords([text]);
   const wanted = new Set(concepts.map((c) => c.toLowerCase()));
   const scored: { c: Candidate; s: number }[] = [];
   for (const c of pool) {

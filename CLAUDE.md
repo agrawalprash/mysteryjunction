@@ -25,6 +25,8 @@ npm run build       # tsc --noEmit + vite build
 ```
 Playwright is preinstalled for UI checks against `npx vite preview` (mock YouTube and Anthropic with `context.route`).
 Native code (Java, `app/android/app/src/main/java/io/github/agrawalprash/wander/`) only compiles in CI.
+Retrieval changes (how map pages and Home find videos) are compared first with `node app/tools/retrieval-sim.mjs`
+(quota per page, relevant videos per page, precision, wait), then built (`src/engine/retrieval.ts`).
 
 ## Shape of the app
 
