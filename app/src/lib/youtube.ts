@@ -172,6 +172,16 @@ async function uploadsPlaylist(handle: string, key: string): Promise<string | nu
   return id;
 }
 
+/**
+ * A channel's recent uploads plus its most popular ones (YouTube keeps a "popular uploads" list,
+ * UULP…, next to the uploads list, UU…): ~2 units, cached. Recent alone is all new, little-watched videos.
+ */
+async function recentAndPopular(uploadsPlaylistId: string, key: string): Promise<string[]> {
+  const recent = await recentUploads(uploadsPlaylistId, key);
+  const popular = await recentUploads('UULP' + uploadsPlaylistId.slice(2), key).catch(() => [] as string[]);
+  return [...new Set([...popular, ...recent])];
+}
+
 /** Up to 50 recent uploads from a playlist (1 unit, cached for a day). */
 async function recentUploads(playlistId: string, key: string): Promise<string[]> {
   const cached = cacheGet<string[]>('cache-uploads', playlistId, UPLOADS_TTL);
@@ -202,7 +212,9 @@ async function videosFromChannels(handles: string[], key: string, words: string[
     try {
       const playlist = await uploadsPlaylist(h, key);
       if (!playlist) continue;
-      const details = await videoDetails(await recentUploads(playlist, key), key);
+      const ids = await recentAndPopular(playlist, key);
+      const details: Video[] = [];
+      for (let i = 0; i < ids.length; i += 50) details.push(...(await videoDetails(ids.slice(i, i + 50), key)));
       out.push(...lexicalFirst(details, words, perChannel));
     } catch (e) {
       if (e instanceof YouTubeError && e.status === 403) throw e; // quota/key problems: stop
@@ -259,7 +271,7 @@ export async function uploadsFromHandles(handles: string[], key: string): Promis
   for (const h of handles.slice(0, 3)) {
     try {
       const playlist = await uploadsPlaylist(h, key);
-      if (playlist) ids.push(...(await recentUploads(playlist, key)));
+      if (playlist) ids.push(...(await recentAndPopular(playlist, key)));
     } catch (e) {
       if (e instanceof YouTubeError && e.status === 403) throw e;
     }
