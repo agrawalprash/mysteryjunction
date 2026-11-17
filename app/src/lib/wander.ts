@@ -1052,12 +1052,25 @@ const PLACES_KEPT = 40;
  *   4. clear matches shown, partial ones only to fill a page that would look empty
  * `warm`: no YouTube calls at all (used to prepare sub-places in the background).
  */
+/** Pages loading in the foreground right now (background warming waits for them). */
+let pageLoading = 0;
+
 export async function placeVideos(
   keys: ApiKeys,
   place: MapPlace,
   onProgress: (m: string) => void = () => undefined,
   warm = false,
 ): Promise<PlaceVideos> {
+  if (warm) return fillPlace(keys, place, onProgress, true);
+  pageLoading += 1;
+  try {
+    return await fillPlace(keys, place, onProgress, false);
+  } finally {
+    pageLoading -= 1;
+  }
+}
+
+async function fillPlace(keys: ApiKeys, place: MapPlace, onProgress: (m: string) => void, warm: boolean): Promise<PlaceVideos> {
   const id = pathId(place.path);
   const cached = state.mapVideos[id];
   if (cached?.videos && cached.algo === PLACE_ALGO && Date.now() - cached.at < PLACE_CACHE) return { videos: cached.videos.filter((v) => eligible(v, ctx())) };
@@ -1184,7 +1197,8 @@ export async function warmSubPlaces(keys: ApiKeys, place: MapPlace) {
   if (warming || !claudeAuth(keys)) return;
   warming = true;
   try {
-    for (const child of (savedLevel(place.path)?.children ?? []).slice(0, 8)) {
+    for (const child of (savedLevel(place.path)?.children ?? []).slice(0, 3)) {
+      if (pageLoading > 0) break; // the page being looked at comes first
       const cid = pathId(child.path);
       const fresh = state.mapVideos[cid]?.algo === PLACE_ALGO && Date.now() - state.mapVideos[cid].at < PLACE_CACHE;
       if (fresh || (state.mapInbox[cid]?.length ?? 0) < ENOUGH_CLEAR) continue;
